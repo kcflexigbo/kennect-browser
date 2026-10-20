@@ -1,7 +1,7 @@
 import net from 'node:net';import {readdir,stat,readFile} from 'node:fs/promises';import {join} from 'node:path';import {homedir} from 'node:os';
 import {pipeName} from './platform.mjs';
 export async function bridgeCall(command,args,tabId){
- const dir=process.env.CODEX_BROWSER_BRIDGE_DIR||join(homedir(),'.codex-browser');let entries;
+ const dir=process.env.KENNECT_BROWSER_BRIDGE_DIR||join(homedir(),'.kennect-browser');let entries;
  try{const d=await stat(dir);if(process.platform!=='win32'&&(d.uid!==process.getuid()||(d.mode&0o077)))throw Error('Unsafe local browser bridge directory');entries=await readdir(dir)}catch(e){if(e.code==='ENOENT')return null;throw e}
  const sockets=[];
  if(process.platform==='win32'){

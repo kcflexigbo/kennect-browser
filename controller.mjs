@@ -15,7 +15,7 @@ function checkUrl(value){
 }
 let socket;
 try{
- const bridge=await bridgeCall(command,args,process.env.CODEX_BROWSER_TAB_ID);
+ const bridge=await bridgeCall(command,args,process.env.KENNECT_BROWSER_TAB_ID);
  if(bridge){let output;if(command==='screenshot'){await writeFile(args[0],Buffer.from(bridge.result.png,'base64'));output=args[0]}else output=typeof bridge.result==='string'?bridge.result:JSON.stringify(bridge.result);await new Promise(r=>process.stdout.write(output+'\n',r));process.exit(0);}
  if(command==='navigate'||command==='open-tab')checkUrl(args[0]);
  const port=Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]);
@@ -23,7 +23,7 @@ try{
  const endpoint=`http://127.0.0.1:${port}`;
  const pages=await (await fetch(`${endpoint}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
  const websitePages=pages.filter(p=>p.type==='page'&&(()=>{try{checkUrl(p.url);return true}catch{return false}})());
- const page=process.env.CODEX_BROWSER_TAB_ID?websitePages.find(p=>p.id===process.env.CODEX_BROWSER_TAB_ID):websitePages[0];
+ const page=process.env.KENNECT_BROWSER_TAB_ID?websitePages.find(p=>p.id===process.env.KENNECT_BROWSER_TAB_ID):websitePages[0];
  if(!page)throw new Error('Open a website in the dedicated browser first.');
  checkUrl(page.url);
  const wsUrl=new URL(page.webSocketDebuggerUrl);
@@ -36,7 +36,7 @@ try{
  const tree=async()=>(await call('Accessibility.getFullAXTree')).nodes;
  switch(command){
   case 'evaluate':{const r=await call('Runtime.evaluate',{expression:args[0],awaitPromise:true,returnByValue:true,timeout:8000});if(r.exceptionDetails)throw new Error(r.exceptionDetails.text);console.log(JSON.stringify(r.result.value??{type:r.result.type,description:r.result.description}));break;}
-  case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Codex Browser extension. Open the website and click Connect.');
+  case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
   case 'tabs':console.log(JSON.stringify(websitePages.map(p=>({tabId:p.id,title:p.title,url:p.url}))));break;
   case 'open-tab':console.log(JSON.stringify(await call('Target.createTarget',{url:checkUrl(args[0])})));break;
   case 'close-tab':await call('Target.closeTarget',{targetId:page.id});console.log('Tab closed.');break;

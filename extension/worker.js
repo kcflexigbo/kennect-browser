@@ -1,10 +1,10 @@
-const HOST='com.codex_browser.local';
+const HOST='com.kennect_browser.local';
 let nativePort,connectedTab;const attached=new Set(),watching=new Set(),requests=new Map();const recordings=new Map(),consoleTabs=new Set(),consoleEntries=new Map();
 const approvedOrigins=new Set();
 function allowed(url){try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}}
 function approved(url){return allowed(url)&&approvedOrigins.has(new URL(url).origin)}
 const cdp=(tabId,method,params={})=>chrome.debugger.sendCommand({tabId},method,params);
-async function tab(id,enable=false){const t=await chrome.tabs.get(id??connectedTab);if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&(!approved(t.url)||!attached.has(t.id)))throw Error('Open this website and click Connect in the Codex Browser extension first.');if(!attached.has(t.id)){await chrome.debugger.attach({tabId:t.id},'1.3');attached.add(t.id)}return t}
+async function tab(id,enable=false){const t=await chrome.tabs.get(id??connectedTab);if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&(!approved(t.url)||!attached.has(t.id)))throw Error('Open this website and click Connect in the Kennect Browser extension first.');if(!attached.has(t.id)){await chrome.debugger.attach({tabId:t.id},'1.3');attached.add(t.id)}return t}
 let nativeReady=false,nativeConnecting;
 let autoConnect=true,retryTimer,retryDelay=1000;
 function retryConnection(){
@@ -70,7 +70,7 @@ chrome.runtime.onStartup.addListener(startBridge);
 chrome.runtime.onInstalled.addListener(startBridge);
 void startBridge();
 async function action({command,args=[],tabId}){
- if(!nativeReady)throw Error('Click Connect browser in the Codex Browser extension first.');
+ if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='status'&&!connectedTab&&!tabId)return JSON.stringify({transport:'extension',connected:true,tabId:null});
  if(command==='open-tab'){
   if(!allowed(args[0]))throw Error('Only HTTP and HTTPS websites can be opened.');

@@ -10,7 +10,7 @@ async function running(){
  try{const port=Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]);if(!Number.isInteger(port)||port<1||port>65535)return false;const r=await fetch(`http://127.0.0.1:${port}/json/version`,{signal:AbortSignal.timeout(1000)});return r.ok}catch{return false}
 }
 try{
- const bridge=await bridgeCall('status',[]);if(bridge){console.log('Reusing the Chrome website connected through Codex Browser.');process.exit(0)}
+ const bridge=await bridgeCall('status',[]);if(bridge){console.log('Reusing the Chrome website connected through Kennect Browser.');process.exit(0)}
  if(await running()){console.log('Dedicated browser is running.');process.exit(0)}
  await mkdir(profile,{recursive:true,mode:0o700});
  const candidates=process.platform==='darwin'?['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']:process.platform==='win32'?[join(process.env.LOCALAPPDATA||homedir(),'Google/Chrome/Application/chrome.exe'),join(process.env.ProgramFiles||'C:\\Program Files','Google/Chrome/Application/chrome.exe'),join(process.env['ProgramFiles(x86)']||'C:\\Program Files (x86)','Google/Chrome/Application/chrome.exe')]:['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'];

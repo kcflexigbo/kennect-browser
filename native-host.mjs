@@ -5,7 +5,7 @@ import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID,randomBytes,timingSafeEqual} from 'node:crypto';
 import {pipeName} from './platform.mjs';
-const dir=process.env.CODEX_BROWSER_BRIDGE_DIR||join(homedir(),'.codex-browser');await mkdir(dir,{recursive:true,mode:0o700});if(process.platform!=='win32')await chmod(dir,0o700);
+const dir=process.env.KENNECT_BROWSER_BRIDGE_DIR||join(homedir(),'.kennect-browser');await mkdir(dir,{recursive:true,mode:0o700});if(process.platform!=='win32')await chmod(dir,0o700);
 const token=randomBytes(32).toString('hex');
 const windows=process.platform==='win32',socketPath=windows?pipeName(homedir(),process.pid):join(dir,`${process.pid}.sock`),discoveryPath=join(dir,`${process.pid}.json`),pending=new Map(),clients=new Set();
 function frame(value){const body=Buffer.from(JSON.stringify(value));const head=Buffer.alloc(4);head.writeUInt32LE(body.length);return Buffer.concat([head,body])}

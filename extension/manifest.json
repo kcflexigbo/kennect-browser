@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Codex Browser",
+  "version": "0.2.2",
+  "description": "Local browser tools for Codex: existing tabs and sign-ins, JavaScript, page snapshots, and request capture.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnYMsT04cRs4HWHHikFAwg432vTjJ51eiudfqMVGWshgefSVHKO3TcibjxWowo1K2CnAyzVGWUzB3kgkfAF95SbcaLTTidIEo0vvAmhfKYUDcyVsvpSvAflrUfEqluEeOd263UZNdeQnNLjFycIqzLvt2iBqY6LR/fDpc4WWxQvQ3NohATGcUNgwjR/z2foEZbGMjIOtN/YQsdQBZEn7giGDlPrqC3JodN8HnXmZ199FqYqJZqlujrGo2bWPifj8Ryp5s0R218GZUaT+zhb9Ji1PI3OX802no9tzA44gKe1gRVQptMVEkQKf6vqY20NV+tXYx+lE+GJ/nhiRFp8206wIDAQAB",
+  "permissions": [
+    "activeTab",
+    "debugger",
+    "nativeMessaging",
+    "storage",
+    "tabs",
+    "tabGroups"
+  ],
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

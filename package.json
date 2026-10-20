@@ -1,0 +1,17 @@
+{
+  "name": "codex-browser-local",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "description": "Independent cross-platform browser tools for Codex",
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "gifenc": "1.0.3",
+    "pngjs": "7.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

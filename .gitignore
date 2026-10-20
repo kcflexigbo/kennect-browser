@@ -1,0 +1,34 @@
+# Dependencies and optional release runtimes
+node_modules/
+runtime/
+# Generated machine-specific installation files
+install/
+native-host-launcher
+native-host.cmd
+# Private captures, logs, credentials and browser state
+outputs/
+private/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp4
+*.pdf
+*.jsonl
+*.log
+*.sock
+*.zip
+*.zip.sha256
+.env
+.env.*
+!.env.example
+.codex/
+.codex-browser/
+*.pem
+*.key
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

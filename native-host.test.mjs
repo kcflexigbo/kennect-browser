@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {readdir,mkdtemp,rm,readFile} from 'node:fs/promises';import {fileURLToPath} from 'node:url';import {join} from 'node:path';import {homedir,tmpdir} from 'node:os';import net from 'node:net';import {pipeName} from './platform.mjs';
+function frame(value){const b=Buffer.from(JSON.stringify(value)),h=Buffer.alloc(4);h.writeUInt32LE(b.length);return Buffer.concat([h,b])}
+test('native host round-trips framed browser messages over a private local socket',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'codex-native-test-'));
+ const child=spawn(process.execPath,[fileURLToPath(new URL('./native-host.mjs',import.meta.url))],{stdio:['pipe','pipe','pipe'],env:{...process.env,CODEX_BROWSER_BRIDGE_DIR:directory}});const windows=process.platform==='win32',discovery=`${child.pid}.${windows?'json':'sock'}`,path=windows?pipeName(homedir(),child.pid):join(directory,discovery);let socket,token;
+ try{
+  let ready=false;for(let i=0;i<40;i++){try{if((await readdir(directory)).includes(discovery)){ready=true;break}}catch{}await new Promise(r=>setTimeout(r,25))}assert.ok(ready);if(windows)token=JSON.parse(await readFile(join(directory,discovery),'utf8')).token;
+  let output=Buffer.alloc(0);child.stdout.on('data',data=>{output=Buffer.concat([output,data]);while(output.length>=4){const n=output.readUInt32LE();if(output.length<n+4)return;const request=JSON.parse(output.subarray(4,n+4));output=output.subarray(n+4);if(request.type==='ready')continue;assert.equal(request.command,'snapshot');child.stdin.write(frame({type:'response',id:request.id,result:'Test page snapshot'}));}});
+  const result=await new Promise((resolve,reject)=>{socket=net.connect(path);let b=Buffer.alloc(0);const timer=setTimeout(()=>reject(Error('Round trip timed out')),3000);socket.on('connect',()=>socket.write(frame({command:'snapshot',args:[],...(token?{token}:{})})));socket.on('error',reject);socket.on('data',chunk=>{b=Buffer.concat([b,chunk]);if(b.length>=4&&b.length>=b.readUInt32LE()+4){clearTimeout(timer);resolve(JSON.parse(b.subarray(4)))}})});
+  assert.equal(result.result,'Test page snapshot');
+ }finally{socket?.destroy();child.stdin.end();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)});await rm(directory,{recursive:true,force:true})}
+});

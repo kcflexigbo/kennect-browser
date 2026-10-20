@@ -64,6 +64,21 @@ Default tests use mocks or isolated local processes and do not read your browser
 
 The existing-profile extension connection, automatic recovery, page reading, screenshots, JavaScript, tab creation, and BOSS inbox navigation have been tested on macOS. Windows paths and registration generation have automated coverage; live Windows operation still needs validation. Groups, uploads, recording and optional console capture need further live testing. Full feature parity with other browser products is not claimed.
 
+## Model evaluation
+
+A small read-only browser trial on **20 October 2026** compared **GPT-5.6 Luna** and **GPT-5.6 Terra**, both at medium reasoning, on the same three Liepin job postings through the extension.
+
+| Model | Manual trial score | Main observation |
+| --- | ---: | --- |
+| GPT-5.6 Luna | 89/100 | Accurate extraction and navigation; less cautious about production-experience gaps. |
+| GPT-5.6 Terra | 93/100 | Similar extraction accuracy, with more cautious screening judgment. |
+
+Both identified a junior-candidate exception, but both missed conflicting requirements between a job's header and detailed description. No messages or applications were sent.
+
+Tentative use: Luna for collecting structured facts, Terra for screening, and stronger-model review for ambiguous matches and final messages. **One three-posting trial does not establish a general model ranking.** Speed and cost were not measured.
+
+See [the evaluation method, score breakdown, limitations, and follow-up plan](docs/model-evaluation.md). Personal browsing evidence is excluded.
+
 ## Privacy and repository contents
 
 Browser requests are relayed through a private local Unix socket on macOS or an authenticated named pipe on Windows. The bridge does not implement remote service access. Websites still receive normal browser traffic, and Codex receives the tool results requested during a task. Captures and page content can contain private data.

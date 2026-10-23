@@ -2,6 +2,8 @@
 
 A local Chrome extension and MCP server for Codex. Use existing website sign-ins, open new tabs, select existing tabs, read pages, run JavaScript, and inspect requests. No Claude account is required.
 
+Open source under the [MIT License](LICENSE), covering the extension, MCP server, operating skill and original documentation.
+
 ## Install from source
 
 Requires Google Chrome and Node.js 24 or newer on macOS or Windows.
@@ -27,9 +29,15 @@ On macOS the launcher is installed in `~/Library/Application Support/Kennect Bro
 - File inputs and uploads, optional console capture, and short GIF recordings.
 - A stdio MCP server and command-line controller.
 
-The extension lists HTTP(S) tabs. Selecting a tab connects it; unrelated tabs are not automatically attached. A redirect to a different origin requires selecting the tab again. Internal browser pages and local file URLs are excluded.
+The extension lists HTTP(S) tabs. Selecting a tab connects it; unrelated tabs are not automatically attached. Origin approvals are currently shared across connected tabs, so a tab group or a successful tool call should not be treated as per-task isolation. Internal browser pages and local file URLs are excluded.
 
 Console capture is off by default. It is disabled on BOSS because that site's developer-console checks can trigger page reloads. One-shot JavaScript evaluation and network capture remain separate.
+
+The current MCP instructions also prohibit starting console collectors, despite the optional capture API. Follow that restriction until the instructions and implementation are reconciled.
+
+## Operating skill
+
+The [Kennect Browser skill](skills/kennect-browser/SKILL.md) contains the operating guidance for these tools, including tab ownership, optional named groups, screenshots, form verification, batching and recovery. Its UI metadata and standalone MIT license are included in `skills/kennect-browser/`. Copy that folder into your user skills directory to install it; setup does not install the skill automatically.
 
 ## Usage
 
@@ -62,7 +70,11 @@ npm test
 
 Default tests use mocks or isolated local processes and do not read your browser pages. Three optional live tests are skipped. To run those tests, set `KENNECT_BROWSER_LIVE_TESTS=1` with a dedicated BOSS test session open; this opts into reading that session.
 
-The existing-profile extension connection, automatic recovery, page reading, screenshots, JavaScript, tab creation, and BOSS inbox navigation have been tested on macOS. Windows paths and registration generation have automated coverage; live Windows operation still needs validation. Groups, uploads, recording and optional console capture need further live testing. Full feature parity with other browser products is not claimed.
+The existing-profile connection and basic browser controls have been exercised on macOS. A controlled Windows audit on22 October2026 exercised34 of37 tool interfaces, including forms, tab groups, screenshots and GIF export. That audit also found the limitations below. Uploads and console capture were not exercised live. These exploratory checks are not a reliability benchmark, and full feature parity with other browser products is not claimed.
+
+### Known limitations
+
+This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls.
 
 ## Model evaluation
 
@@ -93,4 +105,6 @@ The extension public key in `manifest.json` keeps its ID stable. It is public me
 
 Remove the extension in Chrome and only the `mcp_servers.kennect_browser` section from Codex configuration. Remove the native-host registration and launcher created by setup. On Windows remove only the registry entry named above. Personal Chrome profiles are not removed.
 
-Third-party dependency notices are included in `THIRD_PARTY_NOTICES.md`.
+## License
+
+The original project code, Chrome extension, operating skill and documentation are available under the [MIT License](LICENSE). The skill includes its own copy of the license so it can be distributed separately. Third-party dependencies retain their own copyright notices; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

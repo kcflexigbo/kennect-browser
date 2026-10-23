@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kennect Browser"
+  short_description: "Control Kennect browser tabs and verify actions"
+  default_prompt: "Use $kennect-browser to complete this browser task and verify the result."

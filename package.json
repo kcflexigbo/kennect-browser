@@ -2,6 +2,11 @@
   "name": "kennect-browser",
   "version": "0.2.2",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kcflexigbo/kennect-browser.git"
+  },
   "type": "module",
   "description": "Independent cross-platform browser tools for Codex",
   "scripts": {

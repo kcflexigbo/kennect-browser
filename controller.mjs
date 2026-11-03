@@ -4,9 +4,10 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import {bridgeCall} from './bridge-client.mjs';
+import {bridgeCall,listProfiles} from './bridge-client.mjs';
+import {bridgeDirectory,writeDefaultProfile} from './profiles.mjs';
 import {browserProfile} from './platform.mjs';
-const profile=browserProfile();
+const dedicatedProfile=browserProfile();
 const [command='snapshot',...args]=process.argv.slice(2);
 function checkUrl(value){
  const url=new URL(value);
@@ -15,10 +16,18 @@ function checkUrl(value){
 }
 let socket;
 try{
- const bridge=await bridgeCall(command,args,process.env.KENNECT_BROWSER_TAB_ID);
+ if(command==='profiles'){const listing=await listProfiles();await new Promise(r=>process.stdout.write(JSON.stringify(listing)+'\n',r));process.exit(0);}
+ if(command==='set-default-profile'){
+  const profileId=args[0],listing=await listProfiles(),entry=listing.profiles.find(item=>item.profileId===profileId);
+  if(!entry)throw new Error(`Unknown browser profile: ${profileId}. Connected profiles: ${listing.profiles.map(item=>item.profileId).join(', ')||'none'}`);
+  if(!entry.responsive)throw new Error(`Browser profile ${profileId} is not responding. Reopen Chrome in that profile.`);
+  await writeDefaultProfile(bridgeDirectory(),profileId);
+  await new Promise(r=>process.stdout.write(`Default browser profile set to ${profileId}.\n`,r));process.exit(0);
+ }
+ const bridge=await bridgeCall(command,args,process.env.KENNECT_BROWSER_TAB_ID,process.env.KENNECT_BROWSER_PROFILE_ID);
  if(bridge){let output;if(command==='screenshot'){await writeFile(args[0],Buffer.from(bridge.result.png,'base64'));output=args[0]}else output=typeof bridge.result==='string'?bridge.result:JSON.stringify(bridge.result);await new Promise(r=>process.stdout.write(output+'\n',r));process.exit(0);}
  if(command==='navigate'||command==='open-tab')checkUrl(args[0]);
- const port=Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]);
+ const port=Number((await readFile(join(dedicatedProfile,'DevToolsActivePort'),'utf8')).split('\n')[0]);
  if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid local Chrome port.');
  const endpoint=`http://127.0.0.1:${port}`;
  const pages=await (await fetch(`${endpoint}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
@@ -36,7 +45,7 @@ try{
  const tree=async()=>(await call('Accessibility.getFullAXTree')).nodes;
  switch(command){
   case 'evaluate':{const r=await call('Runtime.evaluate',{expression:args[0],awaitPromise:true,returnByValue:true,timeout:8000});if(r.exceptionDetails)throw new Error(r.exceptionDetails.text);console.log(JSON.stringify(r.result.value??{type:r.result.type,description:r.result.description}));break;}
-  case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
+  case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'download':case 'download-status':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
   case 'tabs':console.log(JSON.stringify(websitePages.map(p=>({tabId:p.id,title:p.title,url:p.url}))));break;
   case 'open-tab':console.log(JSON.stringify(await call('Target.createTarget',{url:checkUrl(args[0])})));break;
   case 'close-tab':await call('Target.closeTarget',{targetId:page.id});console.log('Tab closed.');break;
@@ -48,7 +57,7 @@ try{
    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:process.platform==='darwin'?4:2,windowsVirtualKeyCode:65});
    await call('Input.insertText',{text:args.slice(1).join(' ')});console.log('Field filled.');break;
   }
-  case 'status':console.log(JSON.stringify({title:page.title,url:page.url,profile}));break;
+  case 'status':console.log(JSON.stringify({title:page.title,url:page.url,profile:dedicatedProfile}));break;
   case 'snapshot':{
    console.log(`Page: ${page.title}\nURL: ${page.url}`);
    for(const n of await tree())if(!n.ignored&&n.name?.value&&n.role?.value!=='InlineTextBox')console.log(`[${n.backendDOMNodeId??'-'}] ${n.role?.value}: ${n.name.value}`);

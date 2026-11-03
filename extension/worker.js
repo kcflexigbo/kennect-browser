@@ -1,5 +1,8 @@
 const HOST='com.kennect_browser.local';
-let nativePort,connectedTab;const attached=new Set(),watching=new Set(),requests=new Map();const recordings=new Map(),consoleTabs=new Set(),consoleEntries=new Map();
+let nativePort,connectedTab,instanceId;const attached=new Set(),watching=new Set(),requests=new Map();const recordings=new Map(),consoleTabs=new Set(),consoleEntries=new Map(),trackedDownloads=new Map();
+const downloadsReady=chrome.storage.session.get('toolDownloads').then(saved=>{for(const entry of saved.toolDownloads??[])if(Array.isArray(entry)&&Number.isInteger(entry[0]))trackedDownloads.set(entry[0],entry[1])}).catch(()=>{});
+async function identity(){if(instanceId)return instanceId;const saved=await chrome.storage.local.get('instanceId');instanceId=typeof saved.instanceId==='string'&&saved.instanceId?saved.instanceId:crypto.randomUUID();if(saved.instanceId!==instanceId)await chrome.storage.local.set({instanceId});return instanceId}
+async function announce(){const id=await identity();nativePort?.postMessage({type:'hello',instanceId:id,extensionVersion:chrome.runtime.getManifest().version,userAgent:globalThis.navigator?.userAgent??''})}
 const approvedOrigins=new Set();
 function allowed(url){try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}}
 function approved(url){return allowed(url)&&approvedOrigins.has(new URL(url).origin)}
@@ -24,7 +27,7 @@ function connect(){
  nativeConnecting=new Promise((resolve,reject)=>{
   nativePort=chrome.runtime.connectNative(HOST);const timer=setTimeout(()=>{nativePort?.disconnect();nativePort=null;nativeReady=false;reject(Error('Local bridge did not start. Run setup for this computer, then reconnect.'));retryConnection();},6000);
   nativePort.onMessage.addListener(async msg=>{
-   if(msg.type==='ready'){nativeReady=true;clearTimeout(timer);resolve();return}
+   if(msg.type==='ready'){nativeReady=true;clearTimeout(timer);try{await announce()}catch{}resolve();return}
    if(msg.type!=='request')return;
    try{nativePort?.postMessage({type:'response',id:msg.id,result:await action(msg)})}catch(e){nativePort?.postMessage({type:'response',id:msg.id,error:e.message})}
   });
@@ -71,12 +74,24 @@ chrome.runtime.onInstalled.addListener(startBridge);
 void startBridge();
 async function action({command,args=[],tabId}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
+ if(command==='ping')return 'pong';
+ if(command==='download-status'){
+  await downloadsReady;
+  const downloadId=Number(args[0]);if(!Number.isInteger(downloadId)||!trackedDownloads.has(downloadId))throw Error('Unknown download ID for this session.');
+  const [item]=await chrome.downloads.search({id:downloadId});if(!item)throw Error('Download record not found.');
+  const status={downloadId,state:item.state,paused:!!item.paused,bytesReceived:item.bytesReceived??0,totalBytes:item.totalBytes??0,filename:item.filename||null,mime:item.mime||null,error:item.error||null};
+  if(item.state==='complete'&&/^text\/html/i.test(item.mime||''))status.warning='HTML response; verify this is the requested PDF.';
+  return JSON.stringify(status);
+ }
  if(command==='status'&&!connectedTab&&!tabId)return JSON.stringify({transport:'extension',connected:true,tabId:null});
  if(command==='open-tab'){
   if(!allowed(args[0]))throw Error('Only HTTP and HTTPS websites can be opened.');
-  const n=await chrome.tabs.create({url:args[0]});approvedOrigins.add(new URL(args[0]).origin);await tab(n.id,true);connectedTab=n.id;return JSON.stringify({targetId:String(n.id)});
+  const n=await chrome.tabs.create({url:args[0]});approvedOrigins.add(new URL(args[0]).origin);await tab(n.id,true);connectedTab=n.id;
+  let groupId=null;const title=args[1],color=args[2];
+  if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
+  return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
  }
- if(command==='tabs'){const all=await chrome.tabs.query({});return JSON.stringify(all.filter(t=>allowed(t.url)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url)&&attached.has(t.id)})))}
+ if(command==='tabs'){const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url)&&attached.has(t.id),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null})))}
  if(command==='select-tab'){
   const target=await tab(tabId?Number(tabId):connectedTab,true);
   approvedOrigins.add(new URL(target.url).origin);connectedTab=target.id;
@@ -85,13 +100,21 @@ async function action({command,args=[],tabId}){
  const t=await tab(tabId?Number(tabId):connectedTab),id=t.id;
  switch(command){
   case 'groups':{const groups=await chrome.tabGroups.query({});const tabs=await chrome.tabs.query({});const visible=new Set(tabs.filter(t=>attached.has(t.id)&&approved(t.url)).map(t=>t.groupId));return JSON.stringify(groups.filter(g=>visible.has(g.id)));}
-  case 'group':{const ids=JSON.parse(args[0]);for(const target of ids)await tab(Number(target));const groupId=await chrome.tabs.group({tabIds:ids.map(Number)});await chrome.tabGroups.update(groupId,{title:args[1]||'Codex',color:args[2]||'cyan'});return JSON.stringify({groupId});}
+  case 'group':{const ids=JSON.parse(args[0]).map(Number);for(const target of ids)await tab(target);const groupId=await chrome.tabs.group({tabIds:ids});await chrome.tabGroups.update(groupId,{title:args[1]||'Codex',color:args[2]||'cyan'});const grouped=(await chrome.tabs.query({groupId})).filter(t=>ids.includes(t.id));return JSON.stringify({groupId,tabIds:grouped.map(t=>t.id)});}
   case 'group-update':{const groupId=Number(args[0]),changes=JSON.parse(args[1]);const all=await chrome.tabs.query({groupId});if(!all.length||!all.every(t=>attached.has(t.id)&&approved(t.url)))throw Error('Connect every tab in this group before managing it.');await chrome.tabGroups.update(groupId,changes);return 'Group updated.';}
   case 'ungroup':{const ids=JSON.parse(args[0]);for(const target of ids)await tab(Number(target));await chrome.tabs.ungroup(ids.map(Number));return 'Tabs ungrouped.';}
   case 'move-tab':await chrome.tabs.move(id,{index:Number(args[0])});return 'Tab moved.';
   case 'resize':{const width=Number(args[0]),height=Number(args[1]);if(width<320||height<240||width>4000||height>4000)throw Error('Invalid window size');await chrome.windows.update(t.windowId,{width,height});return 'Window resized.';}
   case 'file-inputs':{const {root}=await cdp(id,'DOM.getDocument',{depth:-1,pierce:true});const {nodeIds}=await cdp(id,'DOM.querySelectorAll',{nodeId:root.nodeId,selector:'input[type=file]'});const result=[];for(const nodeId of nodeIds){const {node}=await cdp(id,'DOM.describeNode',{nodeId});result.push({nodeId:node.backendNodeId,attributes:node.attributes})}return JSON.stringify(result);}
-  case 'upload':{const paths=JSON.parse(args[1]);if(!Array.isArray(paths)||!paths.length||!paths.every(p=>typeof p==='string'&&p.startsWith('/')))throw Error('Use absolute local file paths.');await cdp(id,'DOM.setFileInputFiles',{backendNodeId:Number(args[0]),files:paths});return 'Files attached. Verify before submitting.';}
+  case 'upload':{const paths=JSON.parse(args[1]);if(!Array.isArray(paths)||!paths.length||!paths.every(p=>typeof p==='string'&&(p.startsWith('/')||/^[A-Za-z]:[\\/]/.test(p))))throw Error('Use absolute local file paths.');await cdp(id,'DOM.setFileInputFiles',{backendNodeId:Number(args[0]),files:paths});return 'Files attached. Verify before submitting.';}
+  case 'download':{
+   const url=args[0];if(!allowed(url))throw Error('Only HTTP and HTTPS downloads are allowed.');
+   const filename=args[1]||undefined;
+   if(filename!==undefined&&(typeof filename!=='string'||!filename.trim()||filename.length>260||/^[\\/]/.test(filename)||/^[A-Za-z]:/.test(filename)||filename.split(/[\\/]/).includes('..')))throw Error('Filename must be relative to the download directory and must not use ..');
+   const downloadId=await chrome.downloads.download({url,...(filename?{filename}:{}),conflictAction:'uniquify',saveAs:false});
+   trackedDownloads.set(downloadId,{tabId:id,at:Date.now()});await chrome.storage.session.set({toolDownloads:[...trackedDownloads]});
+   return JSON.stringify({downloadId});
+  }
   case 'console-start':if((new URL(t.url).hostname==='zhipin.com'||new URL(t.url).hostname.endsWith('.zhipin.com')))throw Error('Console collection is disabled on BOSS because it triggers page reloads. Use explicit JavaScript or network tools instead.');consoleEntries.set(id,[]);consoleTabs.add(id);await cdp(id,'Runtime.enable');return 'Console capture started. Object handles are not evaluated or expanded.';
   case 'console-logs':return JSON.stringify(consoleEntries.get(id)??[]);
   case 'console-stop':consoleTabs.delete(id);await cdp(id,'Runtime.disable');return 'Console capture stopped.';

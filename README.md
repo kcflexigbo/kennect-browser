@@ -16,6 +16,8 @@ Requires Google Chrome and Node.js 24 or newer on macOS or Windows.
 
 The extension connects automatically. Ask Codex to open a website, or list and select a website tab that is already open. After updating extension files, reload the extension in Chrome.
 
+Each Chrome profile that loads the extension creates its own connection. Browser tools accept an optional `profile`; if it is omitted, the persisted default is used. If no default exists, a single responsive profile is selected automatically; with multiple responsive profiles the call fails with the connected-profile list. On first use, call `browser_profiles`; if multiple profiles are connected and no default is configured, ask the user which Chrome profile should receive browser actions and call `browser_set_default_profile`. The default is stored in `~/.kennect-browser/config.json`.
+
 Setup registers a local native-messaging host and adds the `kennect_browser` MCP entry while preserving other entries. Generated installation files contain paths specific to the installing computer and must not be committed. Run setup again if you move the checkout.
 
 On macOS the launcher is installed in `~/Library/Application Support/Kennect Browser/`, and Chrome's registration is in `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.kennect_browser.local.json`. On Windows setup writes the current user's `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.kennect_browser.local` registry entry. Source checkouts use Node installed on the computer; Windows launchers can also use optional bundled release runtimes.
@@ -23,9 +25,11 @@ On macOS the launcher is installed in `~/Library/Application Support/Kennect Bro
 ## Features
 
 - Automatic local connection and reconnection; a persistent Pause control.
+- Explicit Chrome profile selection, a persisted default profile, and responsive/stale connection reporting.
 - Existing website tabs and sign-ins, new tabs, grouping and window controls.
 - Accessibility snapshots, native mouse/keyboard input, screenshots and JavaScript.
 - Request metadata capture and optional response-body reading.
+- Explicit HTTP(S) downloads with progress, completion, interruption and final-filename status.
 - File inputs and uploads, optional console capture, and short GIF recordings.
 - A stdio MCP server and command-line controller.
 
@@ -42,21 +46,25 @@ The [Kennect Browser skill](skills/kennect-browser/SKILL.md) contains the operat
 ## Usage
 
 ```sh
+node controller.mjs profiles
+node controller.mjs set-default-profile chrome:Default:3f9a2c
 node controller.mjs tabs
 node controller.mjs open-tab https://example.com/
 node controller.mjs snapshot
 node controller.mjs evaluate 'document.title'
 ```
 
-To target a tab explicitly, set `KENNECT_BROWSER_TAB_ID` to an ID returned by `tabs`. Select an existing tab with the MCP `browser_select_tab` tool or the controller's `select-tab` command with that environment variable.
+To target a tab explicitly, set `KENNECT_BROWSER_TAB_ID` to an ID returned by `tabs`. Select an existing tab with the MCP `browser_select_tab` tool or the controller's `select-tab` command with that environment variable. To target a profile explicitly, set `KENNECT_BROWSER_PROFILE_ID` to a profile from `profiles`; the MCP tools expose this as the `profile` argument.
 
 Optional environment variables:
 
 | Variable | Purpose |
 | --- | --- |
 | `KENNECT_BROWSER_TAB_ID` | Target a known website tab. |
-| `KENNECT_BROWSER_PROFILE` | Override the separate fallback Chrome profile path. |
+| `KENNECT_BROWSER_PROFILE_ID` | Select a connected extension profile for this call. |
+| `KENNECT_BROWSER_PROFILE` | Override the separate fallback Chrome user-data directory (not an extension profile selection). |
 | `KENNECT_BROWSER_BRIDGE_DIR` | Override local bridge discovery, primarily for isolated tests. |
+| `KENNECT_BROWSER_SKIP_IDENTITY` | Skip best-effort browser-profile detection in the native host. |
 | `CODEX_HOME` | Override the Codex configuration directory during setup. |
 
 If the extension is unavailable, `node start.mjs` launches a separate persistent Chrome profile. This fallback provides basic page controls and does not share the personal profile's sign-ins. Extended features require the extension.
@@ -74,7 +82,7 @@ The existing-profile connection and basic browser controls have been exercised o
 
 ### Known limitations
 
-This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls.
+This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. Downloads require an HTTP(S) URL: `blob:`/`data:` URLs and POST-only download endpoints are unsupported, and browser login, CAPTCHA, paywall and download-safety decisions still apply. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls.
 
 ## Model evaluation
 

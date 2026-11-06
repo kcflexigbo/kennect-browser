@@ -12,11 +12,14 @@ export function bridgeDirectory(){
 function normalizePath(value){
  return String(value??'').replaceAll('\\','/').replace(/\/+$/,'').toLowerCase();
 }
-export function browserProfileId(identity){
+export function browserProfileId(identity,instanceId,label){
  const browser=String(identity.browser??'').toLowerCase();
- const directory=identity.profileDirectory||'Default';
- const hash=createHash('sha256').update(`${browser}\0${normalizePath(identity.userDataDir)}\0${directory.toLowerCase()}`).digest('hex').slice(0,6);
- return `${browser}:${directory}:${hash}`;
+ const directory=typeof identity.profileDirectory==='string'&&identity.profileDirectory?identity.profileDirectory:null;
+ const instance=typeof instanceId==='string'?instanceId:'';
+ const hash=createHash('sha256').update(`${browser}\0${normalizePath(identity.userDataDir)}\0${(directory??'').toLowerCase()}\0${instance}`).digest('hex').slice(0,6);
+ const clean=value=>String(value??'').replace(/:/g,'').trim().slice(0,40);
+ const name=clean(label)||clean(directory)||'unknown';
+ return `${browser}:${name}:${hash}`;
 }
 function commandValue(command,flag){
  const match=command.match(new RegExp(flag+'=(?:"([^"]*)"|(\\S+))'));
@@ -55,15 +58,18 @@ export function parseBrowserCommandLine(command,options={}){
  if(!browser)return null;
  const platform=options.platform??process.platform,home=options.home??homedir(),env=options.env??process.env;
  const userDataDir=commandValue(command,'--user-data-dir')||defaultUserDataDir(browser,{platform,home,env,exePath:exe});
- const profileDirectory=commandValue(command,'--profile-directory')||'Default';
+ const profileDirectory=commandValue(command,'--profile-directory')||null;
  return{browser,userDataDir,profileDirectory};
 }
 export function browserIdentityFromProcesses(processes,options={}){
+ let fallback=null;
  for(const item of processes??[]){
   const identity=parseBrowserCommandLine(item?.command,options);
-  if(identity)return identity;
+  if(!identity)continue;
+  if(identity.profileDirectory)return identity;
+  fallback??=identity;
  }
- return null;
+ return fallback;
 }
 async function processChain(){
  if(process.platform==='win32'){
@@ -87,14 +93,20 @@ export async function detectBrowserIdentity(options={}){
 }
 export function selectProfile(entries,requested,defaultProfile){
  const list=Array.isArray(entries)?entries:[];
- const chosen=requested??defaultProfile;
+ const suffix=value=>typeof value==='string'?value.split(':').pop():'';
+ const resolve=value=>list.find(item=>item.profileId===value)??(suffix(value)?list.find(item=>suffix(item.profileId)===suffix(value)):undefined);
+ let chosen=requested??defaultProfile;
+ if(chosen&&!resolve(chosen)){
+  if(requested)throw new Error(`Unknown browser profile: ${requested}. Connected profiles: ${list.map(item=>item.profileId).join(', ')||'none'}`);
+  chosen=null;
+ }
  if(!chosen){
   const responsive=list.filter(entry=>entry.responsive);
   if(responsive.length===1)return responsive[0];
   const lines=list.map(entry=>`  - ${entry.profileId}${entry.responsive?'':' (not responding)'}`).join('\n');
   throw new Error(`No browser profile selected. Connected profiles:\n${lines||'  (none)'}\nPass profile on this call, run browser_set_default_profile once, or run: node controller.mjs set-default-profile <profile>`);
  }
- const entry=list.find(item=>item.profileId===chosen);
+ const entry=resolve(chosen);
  if(!entry)throw new Error(`Unknown browser profile: ${chosen}. Connected profiles: ${list.map(item=>item.profileId).join(', ')||'none'}`);
  if(!entry.responsive)throw new Error(`Browser profile ${chosen} is not responding. Reopen Chrome in that profile.`);
  return entry;

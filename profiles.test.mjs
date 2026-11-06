@@ -75,3 +75,75 @@ test('a corrupt default profile config is ignored',async()=>{
   assert.equal(await readProfileConfig(directory),null);
  }finally{await rm(directory,{recursive:true,force:true})}
 });
+
+const chromeCmd=extra=>`"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" ${extra}`.trim();
+const baseIdentity=overrides=>({browser:'chrome',userDataDir:'C:\\Users\\Example\\AppData\\Local\\Google\\Chrome\\User Data',profileDirectory:null,...overrides});
+test('a chrome command line without profile flags does not claim Default',()=>{
+ const identity=parseBrowserCommandLine(chromeCmd(),windows);
+ assert.equal(identity.browser,'chrome');
+ assert.equal(identity.profileDirectory,null);
+});
+test('the process chain prefers an ancestor with an explicit profile flag',()=>{
+ const identity=browserIdentityFromProcesses([
+  {command:'node.exe server.mjs'},
+  {command:chromeCmd()},
+  {command:chromeCmd('--profile-directory="Profile 7"')}
+ ],windows);
+ assert.equal(identity.profileDirectory,'Profile 7');
+});
+test('a flagless ancestor is used only as a fallback',()=>{
+ const identity=browserIdentityFromProcesses([{command:'node.exe server.mjs'},{command:chromeCmd()}],windows);
+ assert.equal(identity.browser,'chrome');
+ assert.equal(identity.profileDirectory,null);
+});
+test('flagless ancestors do not hide a later browser ancestor',()=>{
+ const identity=browserIdentityFromProcesses([{command:chromeCmd()},{command:chromeCmd('--profile-directory="Profile 2"')}],windows);
+ assert.equal(identity.profileDirectory,'Profile 2');
+});
+test('different extension instances in the same directory get distinct profile IDs',()=>{
+ assert.notEqual(browserProfileId(baseIdentity(),'instance-a'),browserProfileId(baseIdentity(),'instance-b'));
+});
+test('the profile ID stays stable for the same profile and instance',()=>{
+ const a=browserProfileId(baseIdentity({profileDirectory:'Profile 7'}),'instance-a');
+ const b=browserProfileId({...baseIdentity({profileDirectory:'Profile 7'}),userDataDir:'c:/users/example/appdata/local/google/chrome/user data/'},'instance-a');
+ assert.equal(a,b);
+ assert.equal(a.split(':')[1],'Profile 7');
+});
+test('an unknown directory is labelled rather than invented as Default',()=>{
+ const id=browserProfileId(baseIdentity(),'instance-a');
+ assert.equal(id.split(':')[1],'unknown');
+ assert.ok(!id.includes('Default'));
+});
+test('a stale saved default does not block a single connected profile',()=>{
+ assert.equal(selectProfile([first],undefined,'chrome:Gone:000000'),first);
+});
+test('an explicitly requested unknown profile still fails',()=>{
+ assert.throws(()=>selectProfile([first],'chrome:Gone:000000',null),/Unknown browser profile/);
+});
+test('two responsive profiles still require a choice',()=>{
+ assert.throws(()=>selectProfile([first,second],undefined,null),/No browser profile selected/);
+});
+test('a profile label replaces the directory in the profile ID',()=>{
+ const id=browserProfileId(baseIdentity(),'instance-a','Butterbase');
+ assert.equal(id.split(':')[1],'Butterbase');
+});
+test('the profile hash does not change when the label changes',()=>{
+ const a=browserProfileId(baseIdentity(),'instance-a','Butterbase');
+ const b=browserProfileId(baseIdentity(),'instance-a','Personal');
+ assert.notEqual(a,b);
+ assert.equal(a.split(':').pop(),b.split(':').pop());
+});
+test('a renamed profile is still matched by its hash',()=>{
+ const entries=[{profileId:'chrome:Butterbase:abc123',responsive:true}];
+ assert.equal(selectProfile(entries,undefined,'chrome:Default:abc123').profileId,'chrome:Butterbase:abc123');
+ assert.equal(selectProfile(entries,'chrome:Personal:abc123',null).profileId,'chrome:Butterbase:abc123');
+});
+test('a profile hash that matches nothing is still rejected',()=>{
+ const entries=[{profileId:'chrome:Butterbase:abc123',responsive:true}];
+ assert.throws(()=>selectProfile(entries,'chrome:Other:ffffff',null),/Unknown browser profile/);
+});
+test('colons are stripped from a label so the ID stays parseable',()=>{
+ const id=browserProfileId(baseIdentity(),'instance-a','Work: main');
+ assert.equal(id.split(':').length,3);
+ assert.equal(id.split(':')[1],'Work main');
+});

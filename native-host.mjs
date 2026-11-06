@@ -12,6 +12,15 @@ const windows=process.platform==='win32',socketPath=windows?pipeName(homedir(),p
 const metadata={pid:process.pid,startedAt:Date.now(),...(windows?{pipe:socketPath,token}:{socket:socketPath})};
 let savingDiscovery=Promise.resolve();
 function saveDiscovery(){savingDiscovery=savingDiscovery.then(async()=>{const temporary=discoveryPath+'.tmp';await writeFile(temporary,JSON.stringify(metadata),{mode:0o600});await rename(temporary,discoveryPath)}).catch(()=>{});return savingDiscovery}
+let detectedIdentity=null;
+function applyIdentity(){
+ if(!detectedIdentity)return;
+ metadata.browser=detectedIdentity.browser;
+ metadata.profileDirectory=detectedIdentity.profileDirectory;
+ metadata.userDataDir=detectedIdentity.userDataDir;
+ metadata.profileId=browserProfileId(detectedIdentity,metadata.instanceId,metadata.profileLabel);
+ return saveDiscovery();
+}
 function frame(value){const body=Buffer.from(JSON.stringify(value));const head=Buffer.alloc(4);head.writeUInt32LE(body.length);return Buffer.concat([head,body])}
 function decode(stream,limit,callback){let buffer=Buffer.alloc(0);stream.on('data',data=>{buffer=Buffer.concat([buffer,data]);while(buffer.length>=4){const n=buffer.readUInt32LE();if(n>limit){stream.destroy();return}if(buffer.length<n+4)return;try{callback(JSON.parse(buffer.subarray(4,n+4).toString()))}catch{stream.destroy();return}buffer=buffer.subarray(n+4)}})}
 decode(process.stdin,32*1024*1024,msg=>{
@@ -19,7 +28,8 @@ decode(process.stdin,32*1024*1024,msg=>{
   if(typeof msg.instanceId==='string')metadata.instanceId=msg.instanceId.slice(0,100);
   if(typeof msg.extensionVersion==='string')metadata.extensionVersion=msg.extensionVersion.slice(0,50);
   if(typeof msg.userAgent==='string')metadata.userAgent=msg.userAgent.slice(0,500);
-  saveDiscovery().catch(()=>{});
+  if(typeof msg.label==='string')metadata.profileLabel=msg.label.trim().slice(0,40);
+  if(detectedIdentity)applyIdentity();else saveDiscovery().catch(()=>{});
   return;
  }
  if(msg.type!=='response')return;const task=pending.get(msg.id);if(!task)return;pending.delete(msg.id);clearTimeout(task.timer);task.client.write(frame(msg))});
@@ -30,6 +40,6 @@ const server=net.createServer(client=>{clients.add(client);decode(client,1024*10
  });client.on('error',()=>{});client.on('close',()=>{clients.delete(client);for(const[id,p]of pending)if(p.client===client){clearTimeout(p.timer);pending.delete(id)}})});
 await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(socketPath,resolve)});await saveDiscovery();if(!windows)await chmod(socketPath,0o600);
 process.stdout.write(frame({type:'ready'}));
-void detectBrowserIdentity().then(identity=>{if(!identity)return;metadata.browser=identity.browser;metadata.profileDirectory=identity.profileDirectory;metadata.userDataDir=identity.userDataDir;metadata.profileId=browserProfileId(identity);return saveDiscovery()}).catch(()=>{});
+void detectBrowserIdentity().then(identity=>{detectedIdentity=identity;return applyIdentity()}).catch(()=>{});
 async function stop(){for(const c of clients)c.destroy();server.close();await rm(discoveryPath,{force:true});await rm(discoveryPath+'.tmp',{force:true});if(!windows)await rm(socketPath,{force:true});process.exit(0)}
 process.stdin.on('end',stop);process.on('SIGTERM',stop);process.on('SIGINT',stop);

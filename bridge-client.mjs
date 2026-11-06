@@ -70,7 +70,7 @@ function entriesWithResponsiveness(results){
   const profileId=profileIdOf(candidate),existing=entries.get(profileId);
   if(!existing||(responsive&&!existing.responsive)||(responsive===existing.responsive&&candidate.time>existing.time)){
    const metadata=candidate.metadata??{};
-   entries.set(profileId,{profileId,responsive,candidate,browser:metadata.browser??null,profileDirectory:metadata.profileDirectory??null,extensionVersion:metadata.extensionVersion??null,instanceId:metadata.instanceId??null,startedAt:metadata.startedAt??null});
+   entries.set(profileId,{profileId,responsive,candidate,browser:metadata.browser??null,profileDirectory:metadata.profileDirectory??null,profileLabel:metadata.profileLabel??null,extensionVersion:metadata.extensionVersion??null,instanceId:metadata.instanceId??null,startedAt:metadata.startedAt??null});
   }
  }
  return entries;
@@ -81,7 +81,7 @@ export async function listProfiles({directory=bridgeDirectory(),probeTimeoutMs=2
  const entries=entriesWithResponsiveness(results);
  const profiles=[];
  for(const entry of [...entries.values()].sort((a,b)=>a.profileId.localeCompare(b.profileId))){
-  profiles.push({profileId:entry.profileId,responsive:entry.responsive,browser:entry.browser,profileDirectory:entry.profileDirectory,extensionVersion:entry.extensionVersion,instanceId:entry.instanceId,startedAt:entry.startedAt,connectedTab:entry.responsive?await connectedTab(entry.candidate,probeTimeoutMs):null});
+  profiles.push({profileId:entry.profileId,label:entry.profileLabel,responsive:entry.responsive,browser:entry.browser,profileDirectory:entry.profileDirectory,extensionVersion:entry.extensionVersion,instanceId:entry.instanceId,startedAt:entry.startedAt,connectedTab:entry.responsive?await connectedTab(entry.candidate,probeTimeoutMs):null});
  }
  return {default:await readProfileConfig(directory),profiles};
 }

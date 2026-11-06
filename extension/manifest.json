@@ -8,6 +8,8 @@
     "activeTab",
     "debugger",
     "downloads",
+    "identity",
+    "identity.email",
     "nativeMessaging",
     "storage",
     "tabs",

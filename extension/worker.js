@@ -9,7 +9,11 @@ const approvedOrigins=new Set();
 function allowed(url){try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}}
 function approved(url){return allowed(url)&&approvedOrigins.has(new URL(url).origin)}
 const cdp=(tabId,method,params={})=>chrome.debugger.sendCommand({tabId},method,params);
-async function tab(id,enable=false){const t=await chrome.tabs.get(id??connectedTab);if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&(!approved(t.url)||!attached.has(t.id)))throw Error('Open this website and click Connect in the Kennect Browser extension first.');if(!attached.has(t.id)){await chrome.debugger.attach({tabId:t.id},'1.3');attached.add(t.id)}return t}
+async function ensureAttached(t){if(attached.has(t.id))return;try{await chrome.debugger.attach({tabId:t.id},'1.3')}catch(e){if(!/Another debugger is already attached/i.test(e?.message??''))throw e}attached.add(t.id)}
+async function persistState(){await chrome.storage.session.set({approvedOrigins:[...approvedOrigins],connectedTab:connectedTab??null})}
+async function restoreState(){const s=await chrome.storage.session.get(['approvedOrigins','connectedTab']);for(const origin of s.approvedOrigins??[])approvedOrigins.add(origin);if(Number.isInteger(s.connectedTab))connectedTab=s.connectedTab}
+const stateReady=restoreState().catch(()=>{});
+async function tab(id,enable=false){const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');await ensureAttached(t);return t}
 let nativeReady=false,nativeConnecting;
 let autoConnect=true,retryTimer,retryDelay=1000;
 function retryConnection(){
@@ -64,9 +68,9 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
    await connect();
    const current=await chrome.tabs.query({active:true,currentWindow:true});const t=current[0];
    if(t&&allowed(t.url)){approvedOrigins.add(new URL(t.url).origin);await tab(t.id,true);connectedTab=t.id;}
-   await chrome.storage.session.set({connectedTab:connectedTab??null,connectionError:null});return{ok:true,tabId:connectedTab};
+   await chrome.storage.session.set({connectionError:null});await persistState();return{ok:true,tabId:connectedTab};
   }
-  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();await chrome.storage.session.remove('connectedTab');return{ok:true}}
+  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();await chrome.storage.session.remove(['approvedOrigins','connectedTab']);return{ok:true}}
   if(m.type==='status')return{ok:true,tabId:connectedTab,connected:!!nativePort&&nativeReady,autoConnect,error:(await chrome.storage.session.get('connectionError')).connectionError};
   throw Error('Unknown popup action');
  })().then(respond,e=>respond({ok:false,error:e.message}));return true;
@@ -77,6 +81,7 @@ void startBridge();
 async function action({command,args=[],tabId}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
+ await stateReady;
  if(command==='download-status'){
   await downloadsReady;
   const downloadId=Number(args[0]);if(!Number.isInteger(downloadId)||!trackedDownloads.has(downloadId))throw Error('Unknown download ID for this session.');
@@ -88,16 +93,16 @@ async function action({command,args=[],tabId}){
  if(command==='status'&&!connectedTab&&!tabId)return JSON.stringify({transport:'extension',connected:true,tabId:null});
  if(command==='open-tab'){
   if(!allowed(args[0]))throw Error('Only HTTP and HTTPS websites can be opened.');
-  const n=await chrome.tabs.create({url:args[0]});approvedOrigins.add(new URL(args[0]).origin);await tab(n.id,true);connectedTab=n.id;
+  const n=await chrome.tabs.create({url:args[0]});approvedOrigins.add(new URL(args[0]).origin);await tab(n.id,true);connectedTab=n.id;await persistState();
   let groupId=null;const title=args[1],color=args[2];
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
  }
- if(command==='tabs'){const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url)&&attached.has(t.id),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null})))}
+ if(command==='tabs'){const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null})))}
  if(command==='select-tab'){
   const target=await tab(tabId?Number(tabId):connectedTab,true);
   approvedOrigins.add(new URL(target.url).origin);connectedTab=target.id;
-  await chrome.tabs.update(target.id,{active:true});await chrome.windows.update(target.windowId,{focused:true});return 'Tab connected and selected.';
+  await chrome.tabs.update(target.id,{active:true});await chrome.windows.update(target.windowId,{focused:true});await persistState();return 'Tab connected and selected.';
  }
  const t=await tab(tabId?Number(tabId):connectedTab),id=t.id;
  switch(command){

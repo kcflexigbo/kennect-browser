@@ -1,10 +1,10 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFile} from 'node:fs/promises';
 async function environment(){
- const pages=new Map([[1,{id:1,url:'https://www.zhipin.com/',title:'BOSS',windowId:1}],[2,{id:2,url:'https://example.com/',title:'Example',windowId:1}]]);let popup;const calls=[];const lifecycle={};const saved={};const posted=[];const downloadCalls=[];let nativeConnections=0;
- const event=()=>({addListener(){}});const chrome={tabs:{get:async id=>pages.get(id),query:async options=>options.active?[pages.get(1)]:options.groupId!==undefined?[...pages.values()].filter(t=>t.groupId===options.groupId):[...pages.values()]},debugger:{attach:async()=>{},detach:async()=>{},onDetach:event(),onEvent:event(),sendCommand:async(target,method)=>{calls.push(method);if(method==='Runtime.enable')throw Error('Continuous console collection must not be enabled');return method==='Accessibility.getFullAXTree'?{nodes:[]}:{};}},runtime:{id:'test',getManifest:()=>({version:'0.3.0'}),onStartup:{addListener(fn){lifecycle.startup=fn}},onInstalled:{addListener(fn){lifecycle.installed=fn}},onMessage:{addListener(fn){popup=fn}},connectNative:()=>{nativeConnections++;return({onMessage:{addListener(fn){queueMicrotask(()=>fn({type:'ready'}))}},onDisconnect:event(),postMessage(message){posted.push(message)},disconnect(){}})}},storage:{local:{get:async()=>saved,set:async value=>Object.assign(saved,value)},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},tabGroups:{query:async()=>[],update:async()=>{}},downloads:{download:async options=>{downloadCalls.push(options);return 42},search:async()=>[]}};
- const scope=vm.createContext({chrome,URL,Map,Set,Error,Number,JSON,Object,setTimeout,clearTimeout,crypto,navigator:{userAgent:'test-agent'}});vm.runInContext(await readFile(new URL('./extension/worker.js',import.meta.url),'utf8'),scope);
+ const pages=new Map([[1,{id:1,url:'https://www.zhipin.com/',title:'BOSS',windowId:1}],[2,{id:2,url:'https://example.com/',title:'Example',windowId:1}]]);let popup;const calls=[];const lifecycle={};const saved={};const sessionSaved={};const attachedTabs=new Set();const posted=[];const downloadCalls=[];let nativeConnections=0;
+ const event=()=>({addListener(){}});const chrome={tabs:{get:async id=>pages.get(id),query:async options=>options.active?[pages.get(1)]:options.groupId!==undefined?[...pages.values()].filter(t=>t.groupId===options.groupId):[...pages.values()]},debugger:{attach:async({tabId})=>{if(attachedTabs.has(tabId))throw Error('Another debugger is already attached to the tab.');attachedTabs.add(tabId)},detach:async({tabId})=>{attachedTabs.delete(tabId)},onDetach:event(),onEvent:event(),sendCommand:async(target,method)=>{calls.push(method);if(method==='Runtime.enable')throw Error('Continuous console collection must not be enabled');return method==='Accessibility.getFullAXTree'?{nodes:[]}:{};}},runtime:{id:'test',getManifest:()=>({version:'0.3.1'}),onStartup:{addListener(fn){lifecycle.startup=fn}},onInstalled:{addListener(fn){lifecycle.installed=fn}},onMessage:{addListener(fn){popup=fn}},connectNative:()=>{nativeConnections++;return({onMessage:{addListener(fn){queueMicrotask(()=>fn({type:'ready'}))}},onDisconnect:event(),postMessage(message){posted.push(message)},disconnect(){}})}},storage:{local:{get:async()=>saved,set:async value=>Object.assign(saved,value)},session:{get:async keys=>{if(keys==null)return{...sessionSaved};if(Array.isArray(keys))return Object.fromEntries(keys.filter(k=>k in sessionSaved).map(k=>[k,sessionSaved[k]]));if(typeof keys==='string')return keys in sessionSaved?{[keys]:sessionSaved[keys]}:{};return{}},set:async value=>Object.assign(sessionSaved,value),remove:async keys=>{for(const key of [].concat(keys??[]))delete sessionSaved[key]}}},tabGroups:{query:async()=>[],update:async()=>{}},downloads:{download:async options=>{downloadCalls.push(options);return 42},search:async()=>[]}};
+ let scope;const load=async()=>{scope=vm.createContext({chrome,URL,Map,Set,Error,Number,JSON,Object,setTimeout,clearTimeout,crypto,navigator:{userAgent:'test-agent'}});vm.runInContext(await readFile(new URL('./extension/worker.js',import.meta.url),'utf8'),scope);await new Promise(resolve=>setImmediate(resolve))};await load();
  const connect=()=>new Promise(resolve=>popup({type:'connect'},{id:'test'},resolve));
- await new Promise(resolve=>setImmediate(resolve));return{pages,calls,scope,connect,lifecycle,saved,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
+ return{pages,calls,lifecycle,saved,sessionSaved,get scope(){return scope},connect,restart:load,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
 }
 test('extension requires a user connection before reading a tab',async()=>{const e=await environment();await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);assert.equal((await e.connect()).ok,true);await e.scope.action({command:'snapshot',tabId:1});assert.ok(e.calls.includes('Accessibility.getFullAXTree'));});
 test('navigation to another origin requires a fresh user connection',async()=>{const e=await environment();await e.connect();e.pages.get(1).url='https://example.com/';await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);});
@@ -113,7 +113,7 @@ test('announces its identity after the bridge connects',async()=>{
  await new Promise(resolve=>setImmediate(resolve));
  const hello=e.posted().find(m=>m.type==='hello');
  assert.ok(hello,'hello was not sent');
- assert.equal(hello.extensionVersion,'0.3.0');
+ assert.equal(hello.extensionVersion,'0.3.1');
  assert.equal(hello.userAgent,'test-agent');
  assert.equal(hello.instanceId,e.saved.instanceId);
 });
@@ -125,4 +125,14 @@ test('reuses the stored identity after reconnecting',async()=>{
  await e.connect();
  const hellos=e.posted().filter(m=>m.type==='hello');
  assert.equal(hellos.at(-1).instanceId,first);
+});
+
+test('service worker restart preserves a connected tab',async()=>{
+ const e=await environment();
+ assert.equal((await e.connect()).ok,true);
+ await e.scope.action({command:'snapshot',tabId:1});
+ await e.restart();
+ await e.scope.action({command:'snapshot',tabId:1});
+ assert.equal(JSON.parse(await e.scope.action({command:'status'})).tabId,1);
+ await assert.rejects(e.scope.action({command:'snapshot',tabId:2}),/click Connect/i);
 });

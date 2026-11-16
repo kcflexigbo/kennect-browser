@@ -29,3 +29,17 @@ liveTest('lists BOSS tabs without collecting console objects',()=>{
 liveTest('executes JavaScript without a continuous console collector',()=>{
  const r=run('evaluate','JSON.stringify({title:document.title,fields:document.querySelectorAll("input").length})');assert.equal(r.status,0,r.stderr);const result=JSON.parse(JSON.parse(r.stdout));assert.match(result.title,/BOSS/);assert.ok(result.fields>=0);
 });
+test('window commands require the extension',()=>{
+ for(const args of [['windows'],['open-window','{}'],['update-window','1','{}'],['close-window','1']]){
+  const r=run(...args);
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/requires the Kennect Browser extension/);
+ }
+});
+test('window targeting in tab commands requires the extension',()=>{
+ for(const args of [['open-tab','https://example.com/','','','1'],['tabs','1']]){
+  const r=run(...args);
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/requires the Kennect Browser extension/);
+ }
+});

@@ -27,6 +27,8 @@ On macOS the launcher is installed in `~/Library/Application Support/Kennect Bro
 - Automatic local connection and reconnection; a persistent Pause control.
 - Explicit Chrome profile selection, a persisted default profile, and responsive/stale connection reporting.
 - Existing website tabs and sign-ins, new tabs, grouping and window controls.
+- Window creation, listing, targeting, naming, claims, and closing for parallel viewport testing.
+- Launch/ensure the personal Chrome profile when the extension is not connected.
 - Accessibility snapshots, native mouse/keyboard input, screenshots and JavaScript.
 - Request metadata capture and optional response-body reading.
 - Explicit HTTP(S) downloads with progress, completion, interruption and final-filename status.
@@ -52,7 +54,12 @@ node controller.mjs tabs
 node controller.mjs open-tab https://example.com/
 node controller.mjs snapshot
 node controller.mjs evaluate 'document.title'
+node controller.mjs windows
+node controller.mjs open-window '{"url":"https://example.com/","width":390,"height":844,"name":"mobile-390","claim":true}'
+node controller.mjs ensure
 ```
+
+`ensure` launches the personal Chrome profile that has the extension and waits for it when no profile is connected. It opens a visible browser window, so use it only with the user's authorization.
 
 To target a tab explicitly, set `KENNECT_BROWSER_TAB_ID` to an ID returned by `tabs`. Select an existing tab with the MCP `browser_select_tab` tool or the controller's `select-tab` command with that environment variable. To target a profile explicitly, set `KENNECT_BROWSER_PROFILE_ID` to a profile from `profiles`; the MCP tools expose this as the `profile` argument.
 
@@ -67,7 +74,7 @@ Optional environment variables:
 | `KENNECT_BROWSER_SKIP_IDENTITY` | Skip best-effort browser-profile detection in the native host. |
 | `CODEX_HOME` | Override the Codex configuration directory during setup. |
 
-If the extension is unavailable, `node start.mjs` launches a separate persistent Chrome profile. This fallback provides basic page controls and does not share the personal profile's sign-ins. Extended features require the extension.
+If the extension is unavailable, `node start.mjs` launches a separate persistent Chrome profile. This fallback provides basic page controls and does not share the personal profile's sign-ins. Extended features require the extension. `node controller.mjs ensure` instead launches the personal Chrome profile that has the extension and waits for it; use it when Chrome is closed.
 
 ## Tests and status
 
@@ -82,7 +89,7 @@ The existing-profile connection and basic browser controls have been exercised o
 
 ### Known limitations
 
-This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. Downloads require an HTTP(S) URL: `blob:`/`data:` URLs and POST-only download endpoints are unsupported, and browser login, CAPTCHA, paywall and download-safety decisions still apply. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls.
+This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. Downloads require an HTTP(S) URL: `blob:`/`data:` URLs and POST-only download endpoints are unsupported, and browser login, CAPTCHA, paywall and download-safety decisions still apply. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls. Window names and claims live in extension session storage and reset with a browser restart or extension reload; window bounds are outer dimensions, not the page viewport; Chrome clamps window width to a platform minimum (about 500 CSS px inner at 100% scaling on Windows), so widths such as 390 need device emulation rather than a resized window; only windows created by the tool can be closed; window operations require the extension; and claims are coordination aids, not a security boundary. `browser_ensure` can launch Chrome only when authorized, cannot revive a paused extension, scans only the default stable Chrome user-data directory, and makes one launch attempt per call.
 
 ## Model evaluation
 

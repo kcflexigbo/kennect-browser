@@ -2,12 +2,15 @@
 // Independent browser adapter. Accessibility and native input by default; JavaScript is explicit.
 // Do not enable Runtime/console collection: BOSS logs objects with side-effecting getters.
 import {readFile,writeFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {bridgeCall,listProfiles} from './bridge-client.mjs';
+import {ensureBrowser} from './ensure.mjs';
 import {bridgeDirectory,writeDefaultProfile} from './profiles.mjs';
 import {browserProfile} from './platform.mjs';
 const dedicatedProfile=browserProfile();
+if(!process.env.KENNECT_BROWSER_SESSION_ID)process.env.KENNECT_BROWSER_SESSION_ID=randomUUID();
 const [command='snapshot',...args]=process.argv.slice(2);
 function checkUrl(value){
  const url=new URL(value);
@@ -24,8 +27,16 @@ try{
   await writeDefaultProfile(bridgeDirectory(),profileId);
   await new Promise(r=>process.stdout.write(`Default browser profile set to ${profileId}.\n`,r));process.exit(0);
  }
+ if(command==='ensure'){
+  const options=JSON.parse(args[0]||'{}');
+  const result=await ensureBrowser(options);
+  await new Promise(r=>process.stdout.write(JSON.stringify(result)+'\n',r));process.exit(0);
+ }
  const bridge=await bridgeCall(command,args,process.env.KENNECT_BROWSER_TAB_ID,process.env.KENNECT_BROWSER_PROFILE_ID);
  if(bridge){let output;if(command==='screenshot'){await writeFile(args[0],Buffer.from(bridge.result.png,'base64'));output=args[0]}else output=typeof bridge.result==='string'?bridge.result:JSON.stringify(bridge.result);await new Promise(r=>process.stdout.write(output+'\n',r));process.exit(0);}
+ const extensionOnly=['windows','open-window','update-window','close-window'];
+ const targetsWindow=(command==='open-tab'&&args[3])||(command==='resize'&&args[2])||(command==='move-tab'&&args[1])||(command==='tabs'&&args[0]);
+ if(extensionOnly.includes(command)||targetsWindow)throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
  if(command==='navigate'||command==='open-tab')checkUrl(args[0]);
  const port=Number((await readFile(join(dedicatedProfile,'DevToolsActivePort'),'utf8')).split('\n')[0]);
  if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid local Chrome port.');
@@ -45,7 +56,7 @@ try{
  const tree=async()=>(await call('Accessibility.getFullAXTree')).nodes;
  switch(command){
   case 'evaluate':{const r=await call('Runtime.evaluate',{expression:args[0],awaitPromise:true,returnByValue:true,timeout:8000});if(r.exceptionDetails)throw new Error(r.exceptionDetails.text);console.log(JSON.stringify(r.result.value??{type:r.result.type,description:r.result.description}));break;}
-  case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'download':case 'download-status':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
+  case 'windows':case 'open-window':case 'update-window':case 'close-window':case 'record-start':case 'record-stop':case 'record-export':case 'record-clear':case 'console-start':case 'console-logs':case 'console-stop':case 'groups':case 'group':case 'group-update':case 'ungroup':case 'move-tab':case 'resize':case 'file-inputs':case 'upload':case 'download':case 'download-status':case 'mouse':case 'network-start':case 'network-stop':case 'network-requests':case 'network-body':throw new Error('This action requires the Kennect Browser extension. Open the website and click Connect.');
   case 'tabs':console.log(JSON.stringify(websitePages.map(p=>({tabId:p.id,title:p.title,url:p.url}))));break;
   case 'open-tab':console.log(JSON.stringify(await call('Target.createTarget',{url:checkUrl(args[0])})));break;
   case 'close-tab':await call('Target.closeTarget',{targetId:page.id});console.log('Tab closed.');break;

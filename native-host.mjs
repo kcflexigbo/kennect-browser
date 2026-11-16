@@ -36,7 +36,7 @@ decode(process.stdin,32*1024*1024,msg=>{
 const server=net.createServer(client=>{clients.add(client);decode(client,1024*1024,msg=>{
  if(windows&&(typeof msg.token!=='string'||msg.token.length!==64||!timingSafeEqual(Buffer.from(msg.token),Buffer.from(token)))){client.destroy();return;}
  const id=randomUUID();const timer=setTimeout(()=>{pending.delete(id);client.write(frame({id:msg.id,error:'Browser action timed out; it was not retried.'}))},12000);
- pending.set(id,{client,timer});process.stdout.write(frame({type:'request',id,command:msg.command,args:msg.args??[],tabId:msg.tabId}));
+ pending.set(id,{client,timer});const sessionId=typeof msg.sessionId==='string'?msg.sessionId.slice(0,100):'';process.stdout.write(frame({type:'request',id,command:msg.command,args:msg.args??[],tabId:msg.tabId,sessionId}));
  });client.on('error',()=>{});client.on('close',()=>{clients.delete(client);for(const[id,p]of pending)if(p.client===client){clearTimeout(p.timer);pending.delete(id)}})});
 await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(socketPath,resolve)});await saveDiscovery();if(!windows)await chmod(socketPath,0o600);
 process.stdout.write(frame({type:'ready'}));

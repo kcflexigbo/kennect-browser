@@ -1,10 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFile} from 'node:fs/promises';
-async function environment(){
- const pages=new Map([[1,{id:1,url:'https://www.zhipin.com/',title:'BOSS',windowId:1}],[2,{id:2,url:'https://example.com/',title:'Example',windowId:1}]]);let popup;const calls=[];const lifecycle={};const saved={};const sessionSaved={};const attachedTabs=new Set();const posted=[];const downloadCalls=[];let nativeConnections=0;
- const event=()=>({addListener(){}});const chrome={tabs:{get:async id=>pages.get(id),query:async options=>options.active?[pages.get(1)]:options.groupId!==undefined?[...pages.values()].filter(t=>t.groupId===options.groupId):[...pages.values()]},debugger:{attach:async({tabId})=>{if(attachedTabs.has(tabId))throw Error('Another debugger is already attached to the tab.');attachedTabs.add(tabId)},detach:async({tabId})=>{attachedTabs.delete(tabId)},onDetach:event(),onEvent:event(),sendCommand:async(target,method)=>{calls.push(method);if(method==='Runtime.enable')throw Error('Continuous console collection must not be enabled');return method==='Accessibility.getFullAXTree'?{nodes:[]}:{};}},runtime:{id:'test',getManifest:()=>({version:'0.3.1'}),onStartup:{addListener(fn){lifecycle.startup=fn}},onInstalled:{addListener(fn){lifecycle.installed=fn}},onMessage:{addListener(fn){popup=fn}},connectNative:()=>{nativeConnections++;return({onMessage:{addListener(fn){queueMicrotask(()=>fn({type:'ready'}))}},onDisconnect:event(),postMessage(message){posted.push(message)},disconnect(){}})}},storage:{local:{get:async()=>saved,set:async value=>Object.assign(saved,value)},session:{get:async keys=>{if(keys==null)return{...sessionSaved};if(Array.isArray(keys))return Object.fromEntries(keys.filter(k=>k in sessionSaved).map(k=>[k,sessionSaved[k]]));if(typeof keys==='string')return keys in sessionSaved?{[keys]:sessionSaved[keys]}:{};return{}},set:async value=>Object.assign(sessionSaved,value),remove:async keys=>{for(const key of [].concat(keys??[]))delete sessionSaved[key]}}},tabGroups:{query:async()=>[],update:async()=>{}},downloads:{download:async options=>{downloadCalls.push(options);return 42},search:async()=>[]}};
+async function environment(options={}){
+ const pages=new Map([[1,{id:1,url:'https://www.zhipin.com/',title:'BOSS',windowId:1}],[2,{id:2,url:'https://example.com/',title:'Example',windowId:1}]]);const windows=new Map([[1,{id:1,focused:true,state:'normal',left:0,top:0,width:1200,height:800,type:'normal'}]]);let nextWindowId=10,nextTabId=10;let popup;const calls=[];const lifecycle={};const saved={};const sessionSaved={};const attachedTabs=new Set();const posted=[];const downloadCalls=[];let nativeConnections=0;
+ const event=()=>({addListener(){}});const chrome={tabs:{get:async id=>pages.get(id),query:async options=>options.active?[pages.get(1)]:options.windowId!==undefined?[...pages.values()].filter(t=>t.windowId===options.windowId):options.groupId!==undefined?[...pages.values()].filter(t=>t.groupId===options.groupId):[...pages.values()],create:async({url,windowId})=>{const t={id:nextTabId++,url,title:'New tab',windowId:windowId??1};pages.set(t.id,t);return t},move:async(tabIds,{windowId}={})=>{for(const id of [].concat(tabIds)){const t=pages.get(Number(id));if(t&&windowId!==undefined)t.windowId=windowId}}},windows:{create:async options=>{const id=nextWindowId++;const win={id,focused:options.focused??false,state:'normal',left:options.left??0,top:options.top??0,width:options.width??1200,height:options.height??800,type:'normal'};windows.set(id,win);const tab={id:nextTabId++,url:options.url,title:'New window',windowId:id};pages.set(tab.id,tab);return{...win,tabs:[tab]}},get:async id=>windows.get(id),getAll:async()=>[...windows.values()].map(w=>({...w,tabs:[...pages.values()].filter(t=>t.windowId===w.id)})),remove:async id=>{windows.delete(id);for(const[tabId,tab]of pages)if(tab.windowId===id)pages.delete(tabId)},update:async(id,changes)=>Object.assign(windows.get(id),changes),getLastFocused:async()=>[...windows.values()].find(w=>w.focused)??[...windows.values()][0]},debugger:{attach:async({tabId})=>{if(attachedTabs.has(tabId))throw Error('Another debugger is already attached to the tab.');attachedTabs.add(tabId)},detach:async({tabId})=>{attachedTabs.delete(tabId)},onDetach:event(),onEvent:event(),sendCommand:async(target,method)=>{calls.push(method);if(method==='Runtime.enable')throw Error('Continuous console collection must not be enabled');return method==='Accessibility.getFullAXTree'?{nodes:[]}:{};}},runtime:{id:'test',getManifest:()=>({version:'0.5.0'}),onStartup:{addListener(fn){lifecycle.startup=fn}},onInstalled:{addListener(fn){lifecycle.installed=fn}},onMessage:{addListener(fn){popup=fn}},connectNative:()=>{nativeConnections++;return({onMessage:{addListener(fn){queueMicrotask(()=>fn({type:'ready'}))}},onDisconnect:event(),postMessage(message){posted.push(message)},disconnect(){}})}},storage:{local:{get:async()=>saved,set:async value=>Object.assign(saved,value)},session:{get:async keys=>{if(keys==null)return{...sessionSaved};if(Array.isArray(keys))return Object.fromEntries(keys.filter(k=>k in sessionSaved).map(k=>[k,sessionSaved[k]]));if(typeof keys==='string')return keys in sessionSaved?{[keys]:sessionSaved[keys]}:{};return{}},set:async value=>Object.assign(sessionSaved,value),remove:async keys=>{for(const key of [].concat(keys??[]))delete sessionSaved[key]}}},tabGroups:{query:async()=>[],update:async()=>{}},downloads:{download:async options=>{downloadCalls.push(options);return 42},search:async()=>[]}};
+ if(options.delayRegistryGet){const get=chrome.storage.session.get;chrome.storage.session.get=async keys=>{const result=await get(keys);if(keys==='windowRegistry'||(Array.isArray(keys)&&keys.includes('windowRegistry')))await new Promise(r=>setTimeout(r,50));return result}}
  let scope;const load=async()=>{scope=vm.createContext({chrome,URL,Map,Set,Error,Number,JSON,Object,setTimeout,clearTimeout,crypto,navigator:{userAgent:'test-agent'}});vm.runInContext(await readFile(new URL('./extension/worker.js',import.meta.url),'utf8'),scope);await new Promise(resolve=>setImmediate(resolve))};await load();
  const connect=()=>new Promise(resolve=>popup({type:'connect'},{id:'test'},resolve));
- return{pages,calls,lifecycle,saved,sessionSaved,get scope(){return scope},connect,restart:load,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
+ return{pages,windows,calls,lifecycle,saved,sessionSaved,seedRegistry:async value=>{sessionSaved.windowRegistry=value;await load()},get scope(){return scope},connect,restart:load,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
 }
 test('extension requires a user connection before reading a tab',async()=>{const e=await environment();await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);assert.equal((await e.connect()).ok,true);await e.scope.action({command:'snapshot',tabId:1});assert.ok(e.calls.includes('Accessibility.getFullAXTree'));});
 test('navigation to another origin requires a fresh user connection',async()=>{const e=await environment();await e.connect();e.pages.get(1).url='https://example.com/';await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);});
@@ -113,7 +114,7 @@ test('announces its identity after the bridge connects',async()=>{
  await new Promise(resolve=>setImmediate(resolve));
  const hello=e.posted().find(m=>m.type==='hello');
  assert.ok(hello,'hello was not sent');
- assert.equal(hello.extensionVersion,'0.3.1');
+ assert.equal(hello.extensionVersion,'0.5.0');
  assert.equal(hello.userAgent,'test-agent');
  assert.equal(hello.instanceId,e.saved.instanceId);
 });
@@ -135,4 +136,195 @@ test('service worker restart preserves a connected tab',async()=>{
  await e.scope.action({command:'snapshot',tabId:1});
  assert.equal(JSON.parse(await e.scope.action({command:'status'})).tabId,1);
  await assert.rejects(e.scope.action({command:'snapshot',tabId:2}),/click Connect/i);
+});
+test('window listing reports names, bounds, and claims',async()=>{
+ const e=await environment();
+ e.sessionSaved.windowRegistry={1:{windowId:1,name:'desktop',purpose:'desktop testing',ownerSession:'agent-aaaa',claimedAt:Date.now(),leaseUntil:Date.now()+60000,leaseMs:60000,createdByTool:true,createdAt:Date.now()}};
+ await e.restart();
+ const result=JSON.parse(await e.scope.action({command:'windows',args:[],sessionId:'agent-aaaa'}));
+ assert.equal(result.windows.length,1);
+ const w=result.windows[0];
+ assert.equal(w.windowId,1);
+ assert.equal(w.name,'desktop');
+ assert.deepEqual(w.bounds,{left:0,top:0,width:1200,height:800});
+ assert.equal(w.claimedByYou,true);
+ assert.equal(w.claimedByOther,false);
+ assert.equal(w.tabCount,2);
+ assert.equal(w.connectedTabCount,0);
+});
+test('opening a window creates it with bounds, a name, and a claim',async()=>{
+ const e=await environment();
+ await e.connect();
+ const result=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/mobile',width:390,height:844,name:'mobile-390',purpose:'mobile viewport',claim:true})],sessionId:'agent-a'}));
+ assert.equal(result.reused,false);
+ assert.equal(result.name,'mobile-390');
+ const win=e.windows.get(result.windowId);
+ assert.equal(win.width,390);
+ assert.equal(win.height,844);
+ assert.equal(win.focused,false);
+ assert.equal(e.pages.get(Number(result.tabId)).windowId,result.windowId);
+ const entry=e.sessionSaved.windowRegistry[result.windowId];
+ assert.equal(entry.name,'mobile-390');
+ assert.equal(entry.ownerSession,'agent-a');
+});
+test('window creation refuses duplicate and conflicting names',async()=>{
+ const e=await environment();
+ await e.connect();
+ const first=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'Mobile-390',claim:true})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:' mobile-390 '})],sessionId:'agent-a'}),/already/i);
+ const reused=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/c',name:'mobile-390',reuseExisting:true})],sessionId:'agent-a'}));
+ assert.equal(reused.reused,true);
+ assert.equal(reused.windowId,first.windowId);
+ await assert.rejects(e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/d',name:'mobile-390',reuseExisting:true})],sessionId:'agent-b'}),/claimed/i);
+});
+test('concurrent window creation keeps both registry entries',async()=>{
+ const e=await environment();
+ await e.connect();
+ await Promise.all([
+  e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/1',name:'one'})],sessionId:'agent-a'}),
+  e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/2',name:'two'})],sessionId:'agent-b'})
+ ]);
+ const names=Object.values(e.sessionSaved.windowRegistry).map(x=>x.name).sort();
+ assert.deepEqual(names,['one','two']);
+});
+test('updating a window resizes and renames only the target',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'desktop'})],sessionId:'agent-a'}));
+ const other=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:'other'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:800,height:600,name:'desktop-main'})],sessionId:'agent-a'});
+ assert.equal(e.windows.get(opened.windowId).width,800);
+ assert.equal(e.windows.get(other.windowId).width,1200);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].name,'desktop-main');
+});
+test('window updates reject duplicates, empty changes, and unknown windows',async()=>{
+ const e=await environment();
+ await e.connect();
+ const a=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:'b'})],sessionId:'agent-a'});
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(a.windowId),JSON.stringify({name:'b'})],sessionId:'agent-a'}),/already/i);
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(a.windowId),'{}'],sessionId:'agent-a'}),/change/i);
+ await assert.rejects(e.scope.action({command:'update-window',args:['999',JSON.stringify({width:800,height:600})],sessionId:'agent-a'}),/Unknown window/i);
+});
+test('closing windows refuses untracked and last windows',async()=>{
+ const e=await environment();
+ await e.connect();
+ await assert.rejects(e.scope.action({command:'close-window',args:['1',''],sessionId:'agent-a'}),/created by browser_open_window/i);
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ e.windows.delete(1);
+ await assert.rejects(e.scope.action({command:'close-window',args:[String(opened.windowId),''],sessionId:'agent-a'}),/only Chrome window/i);
+});
+test('closing a tracked window removes it and its registry entry',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'task'})],sessionId:'agent-a'}));
+ const result=JSON.parse(await e.scope.action({command:'close-window',args:[String(opened.windowId),''],sessionId:'agent-a'}));
+ assert.equal(result.closed,true);
+ assert.equal(e.windows.has(opened.windowId),false);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId],undefined);
+});
+test('a claim blocks window-scoped updates from another session',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'}),/claimed by another agent/i);
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800,force:true})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('page reads still work in a claimed window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await e.scope.action({command:'snapshot',tabId:Number(opened.tabId),sessionId:'agent-b'});
+ assert.ok(e.calls.includes('Accessibility.getFullAXTree'));
+});
+test('an expired lease no longer blocks another session',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ e.sessionSaved.windowRegistry[opened.windowId].leaseUntil=Date.now()-1;
+ await e.restart();
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('releasing a claim allows another session to update',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({claim:false})],sessionId:'agent-a'});
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('an owner mutation renews the lease',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ const before=Date.now();
+ e.sessionSaved.windowRegistry[opened.windowId].leaseUntil=before+5000;
+ await e.restart();
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-a'});
+ assert.ok(e.sessionSaved.windowRegistry[opened.windowId].leaseUntil>before+10000);
+});
+test('open-tab targets an explicit window and resolves the connected tab window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/window',name:'target'})],sessionId:'agent-a'}));
+ const explicit=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/explicit','','',String(opened.windowId)],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(explicit.targetId)).windowId,opened.windowId);
+ e.scope.chrome.tabs.update=async()=>{};
+ await e.scope.action({command:'select-tab',tabId:2,sessionId:'agent-a'});
+ const implicit=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/implicit','',''],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(implicit.targetId)).windowId,1);
+});
+test('resize by windowId changes only that window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'resize',args:['500','800',String(opened.windowId)],sessionId:'agent-a'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+ assert.equal(e.windows.get(1).width,1200);
+});
+test('move-tab moves to a destination window and tabs filter by window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'move-tab',args:['0',String(opened.windowId)],sessionId:'agent-a',tabId:2});
+ assert.equal(e.pages.get(2).windowId,opened.windowId);
+ const filtered=JSON.parse(await e.scope.action({command:'tabs',args:[String(opened.windowId)],sessionId:'agent-a'}));
+ assert.ok(filtered.every(t=>t.windowId===opened.windowId));
+});
+test('implicit window targets are blocked by another session claim',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'locked',claim:true})],sessionId:'agent-a'}));
+ e.scope.chrome.tabs.update=async()=>{};
+ await e.scope.action({command:'select-tab',tabId:Number(opened.tabId),sessionId:'agent-b'});
+ await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-b'}),/claimed by another agent/i);
+ await assert.rejects(e.scope.action({command:'resize',args:['500','800'],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('a delayed registry load cannot bypass a claim',async()=>{
+ const e=await environment({delayRegistryGet:true});
+ e.sessionSaved.windowRegistry={1:{windowId:1,name:'locked',purpose:null,ownerSession:'agent-a',claimedAt:Date.now(),leaseUntil:Date.now()+60000,leaseMs:60000,createdByTool:true,createdAt:Date.now()}};
+ await e.restart();
+ await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/x','','','1'],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('open-tab falls back when the connected tab is gone',async()=>{
+ const e=await environment();await e.connect();
+ const first=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/a','',''],sessionId:'agent-a'}));
+ e.pages.delete(Number(first.targetId));
+ const second=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(second.targetId)).windowId,1);
+});
+test('an empty session id is treated as local',async()=>{
+ const e=await environment();await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'local-window',claim:true})],sessionId:''}));
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].ownerSession,'local');
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('a rejected claim leaves the window unchanged',async()=>{
+ const e=await environment();await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:640,height:480,claim:true})],sessionId:'agent-a'}),/requires a name/i);
+ assert.equal(e.windows.get(opened.windowId).width,1200);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].ownerSession,null);
 });

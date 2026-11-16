@@ -165,6 +165,22 @@ async function updateWindow(windowId,changes,sessionId){
   return JSON.stringify(windowSummary(win,entry,sessionId,tabs));
  });
 }
+async function closeWindow(windowId,sessionId,force){
+ if(!Number.isInteger(windowId)||windowId<0)throw Error('Invalid window ID.');
+ return withWindowRegistry(async()=>{
+  const all=await chrome.windows.getAll({windowTypes:['normal']});
+  pruneWindowRegistry(new Set(all.map(w=>w.id)));
+  const entry=windowRegistry[windowId];
+  if(!entry?.createdByTool)throw Error('Only windows created by browser_open_window in this browser session can be closed. Close user windows manually.');
+  if(all.length<=1)throw Error('Refusing to close the only Chrome window.');
+  const claim=activeClaim(entry);
+  if(claim&&claim.ownerSession!==sessionId&&!force)throw Error(`Window ${windowId} is claimed by another agent until ${new Date(claim.leaseUntil).toISOString()}. Use another window or ask the user to release the claim.`);
+  await chrome.windows.remove(windowId);
+  delete windowRegistry[windowId];
+  await saveWindowRegistry();
+  return JSON.stringify({closed:true,windowId});
+ });
+}
 async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
@@ -185,6 +201,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
  }
+ if(command==='close-window')return closeWindow(Number(args[0]),sessionId,args[1]==='1');
  if(command==='update-window')return updateWindow(Number(args[0]),JSON.parse(args[1]||'{}'),sessionId);
  if(command==='open-window')return openWindow(JSON.parse(args[0]||'{}'),sessionId);
  if(command==='windows'){

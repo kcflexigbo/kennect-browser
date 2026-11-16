@@ -205,3 +205,20 @@ test('window updates reject duplicates, empty changes, and unknown windows',asyn
  await assert.rejects(e.scope.action({command:'update-window',args:[String(a.windowId),'{}'],sessionId:'agent-a'}),/change/i);
  await assert.rejects(e.scope.action({command:'update-window',args:['999',JSON.stringify({width:800,height:600})],sessionId:'agent-a'}),/Unknown window/i);
 });
+test('closing windows refuses untracked and last windows',async()=>{
+ const e=await environment();
+ await e.connect();
+ await assert.rejects(e.scope.action({command:'close-window',args:['1',''],sessionId:'agent-a'}),/created by browser_open_window/i);
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ e.windows.delete(1);
+ await assert.rejects(e.scope.action({command:'close-window',args:[String(opened.windowId),''],sessionId:'agent-a'}),/only Chrome window/i);
+});
+test('closing a tracked window removes it and its registry entry',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'task'})],sessionId:'agent-a'}));
+ const result=JSON.parse(await e.scope.action({command:'close-window',args:[String(opened.windowId),''],sessionId:'agent-a'}));
+ assert.equal(result.closed,true);
+ assert.equal(e.windows.has(opened.windowId),false);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId],undefined);
+});

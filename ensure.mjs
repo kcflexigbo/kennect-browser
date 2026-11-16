@@ -1,7 +1,7 @@
 import {access,readFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {homedir} from 'node:os';
-import {join} from 'node:path';
+import path from 'node:path';
 import {listProfiles} from './bridge-client.mjs';
 import {chromeProfiles,chooseExtensionProfile,defaultUserDataDir} from './profiles.mjs';
 export const DEFAULT_TIMEOUT_MS=30000,MIN_TIMEOUT_MS=5000,MAX_TIMEOUT_MS=60000;
@@ -15,8 +15,9 @@ export function buildLaunchArgs({userDataDir,profileDirectory}){
 export function ensureChildTimeout(timeoutMs=DEFAULT_TIMEOUT_MS){return Math.min((timeoutMs??DEFAULT_TIMEOUT_MS)+5000,65000)}
 async function pathExists(value){try{await access(value);return true}catch{return false}}
 export async function findChromeExecutable({platform=process.platform,env=process.env,home=homedir(),exists=pathExists}={}){
- const local=env.LOCALAPPDATA||join(home,'AppData','Local');
- const candidates=platform==='darwin'?['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']:platform==='win32'?[join(local,'Google','Chrome','Application','chrome.exe'),join(env.ProgramFiles||'C:\\Program Files','Google','Chrome','Application','chrome.exe'),join(env['ProgramFiles(x86)']||'C:\\Program Files (x86)','Google','Chrome','Application','chrome.exe')]:['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'];
+ const p=platform==='win32'?path.win32:path.posix;
+ const local=env.LOCALAPPDATA||p.join(home,'AppData','Local');
+ const candidates=platform==='darwin'?['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']:platform==='win32'?[p.join(local,'Google','Chrome','Application','chrome.exe'),p.join(env.ProgramFiles||'C:\\Program Files','Google','Chrome','Application','chrome.exe'),p.join(env['ProgramFiles(x86)']||'C:\\Program Files (x86)','Google','Chrome','Application','chrome.exe')]:['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'];
  for(const candidate of candidates)if(await exists(candidate))return{path:candidate,candidates};
  return{path:null,candidates};
 }
@@ -37,11 +38,15 @@ function buildResult({launched,chosen,profiles,profileDirectory,serverVersion,id
  if(identityWarning)warnings.push(identityWarning);
  return{launched,profileId:chosen?.profileId??null,browser:chosen?.browser??null,label:chosen?.label??null,profileDirectory:profileDirectory??chosen?.profileDirectory??null,extensionVersion:chosen?.extensionVersion??null,profiles,warning:warnings.length?warnings.join(' '):null};
 }
+function profileFailure(prefix,scan){
+ const checked=(scan?.profiles??[]).map(item=>item.directory).join(', ')||'(none)';
+ return `${prefix} Checked profiles: ${checked}. Load or enable the Kennect Browser extension in chrome://extensions. This version does not scan a custom --user-data-dir, Chrome Beta, Canary, or SxS install.`;
+}
 export async function ensureBrowser({profileDirectory,timeoutMs=DEFAULT_TIMEOUT_MS,platform=process.platform,env=process.env,home=homedir(),listProfilesImpl=listProfiles,spawnImpl=spawn,profileScanImpl=defaultProfileScan,chromeExecutableImpl=findChromeExecutable,serverVersion,sleep=defaultSleep,now=Date.now}={}){
  validateEnsureOptions({profileDirectory,timeoutMs});
  const resolvedServerVersion=serverVersion??await readServerVersion();
  const requested=profileDirectory===undefined?null:profileDirectory.trim();
- const before=await listProfilesImpl();
+ const before=await listProfilesImpl({probeTimeoutMs:1000});
  const responsiveBefore=(before?.profiles??[]).filter(item=>item.responsive);
  if(requested){
   const match=responsiveBefore.find(item=>item.profileDirectory&&normalizeDirectory(item.profileDirectory,platform)===normalizeDirectory(requested,platform));
@@ -54,11 +59,11 @@ export async function ensureBrowser({profileDirectory,timeoutMs=DEFAULT_TIMEOUT_
  let chosenScan;
  if(requested){
   chosenScan=scanResult.profiles.find(item=>normalizeDirectory(item.directory,platform)===normalizeDirectory(requested,platform));
-  if(!chosenScan)throw Error(`Chrome profile "${requested}" was not found. Profiles: ${scanResult.profiles.map(item=>item.directory).join(', ')||'(none)'}.`);
-  if(!chosenScan.extensionEnabled)throw Error(`Chrome profile "${requested}" does not have the Kennect Browser extension enabled. Enable it in chrome://extensions.`);
+  if(!chosenScan)throw Error(profileFailure(`Chrome profile "${requested}" was not found.`,scanResult));
+  if(!chosenScan.extensionEnabled)throw Error(profileFailure(`Chrome profile "${requested}" does not have the Kennect Browser extension enabled.`,scanResult));
  }else{
   chosenScan=chooseExtensionProfile(scanResult);
-  if(!chosenScan)throw Error(`No Chrome profile has the Kennect Browser extension enabled. Load it in chrome://extensions. This version does not scan a custom --user-data-dir, Chrome Beta, Canary, or SxS install. Checked: ${scanResult.profiles.map(item=>item.directory).join(', ')||'(none)'}.`);
+  if(!chosenScan)throw Error(profileFailure('No Chrome profile has the Kennect Browser extension enabled.',scanResult));
  }
  const executable=await chromeExecutableImpl({platform,env,home});
  if(!executable?.path)throw Error(`Google Chrome was not found. Checked: ${executable?.candidates?.join(', ')||'(no candidates)'}.`);
@@ -72,7 +77,7 @@ export async function ensureBrowser({profileDirectory,timeoutMs=DEFAULT_TIMEOUT_
  let finalListing=before,connected=null;
  while(now()<deadline){
   await sleep(500);
-  finalListing=await listProfilesImpl();
+  finalListing=await listProfilesImpl({probeTimeoutMs:1000});
   const current=(finalListing?.profiles??[]).filter(item=>item.responsive);
   const targetKey=normalizeDirectory(requested??chosenScan.directory,platform);
   const directoryMatch=current.find(item=>item.profileDirectory&&normalizeDirectory(item.profileDirectory,platform)===targetKey);

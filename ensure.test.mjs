@@ -42,10 +42,11 @@ test('ensure reuses a requested profile when it is already responsive',async()=>
  assert.equal(result.launched,false);assert.equal(result.profileId,'chrome:Profile 7:cccccc');assert.equal(spawned,0);
 });
 test('ensure launches the selected profile and waits for a new connection',async()=>{
- const calls=[];let n=0;const list=async()=>{n++;return n===1?listing([]):listing([profile()])};
+ const calls=[],options=[];let n=0;const list=async opts=>{n++;options.push(opts);return n===1?listing([]):listing([profile()])};
  const result=await ensureBrowser({listProfilesImpl:list,profileScanImpl:async()=>scan(),chromeExecutableImpl:async()=>({path:'C:/chrome.exe',candidates:['C:/chrome.exe']}),spawnImpl:(path,args)=>{calls.push({path,args});return child()},serverVersion:'0.5.0',...clock()});
  assert.equal(result.launched,true);assert.equal(result.profileId,'chrome:Default:aaaaaa');
  assert.equal(calls.length,1);assert.equal(calls[0].path,'C:/chrome.exe');assert.deepEqual(calls[0].args,buildLaunchArgs({userDataDir:'C:\\UD',profileDirectory:'Default'}));
+ assert.ok(options.length>=2);assert.ok(options.every(item=>item?.probeTimeoutMs===1000));
 });
 test('ensure fails before launching when no profile has the extension',async()=>{
  let spawned=0;
@@ -53,7 +54,10 @@ test('ensure fails before launching when no profile has the extension',async()=>
  assert.equal(spawned,0);
 });
 test('ensure rejects a requested profile without the extension',async()=>{
- await assert.rejects(ensureBrowser({profileDirectory:'Default',listProfilesImpl:async()=>listing([]),profileScanImpl:async()=>scan({profiles:[{directory:'Default',extensionEnabled:false}]}),serverVersion:'0.5.0'}),/does not have the Kennect Browser extension enabled/i);
+ await assert.rejects(ensureBrowser({profileDirectory:'Default',listProfilesImpl:async()=>listing([]),profileScanImpl:async()=>scan({profiles:[{directory:'Default',extensionEnabled:false}]}),serverVersion:'0.5.0'}),/does not have the Kennect Browser extension enabled[\s\S]*Checked profiles: Default[\s\S]*chrome:\/\/extensions[\s\S]*user-data-dir/i);
+});
+test('a missing requested profile reports checked profiles and extension guidance',async()=>{
+ await assert.rejects(ensureBrowser({profileDirectory:'Missing',listProfilesImpl:async()=>listing([]),profileScanImpl:async()=>scan({profiles:[{directory:'Default',extensionEnabled:true}]}),serverVersion:'0.5.0'}),/was not found[\s\S]*Checked profiles: Default[\s\S]*chrome:\/\/extensions[\s\S]*user-data-dir/i);
 });
 test('ensure reports a missing Chrome executable with the attempted paths',async()=>{
  await assert.rejects(ensureBrowser({listProfilesImpl:async()=>listing([]),profileScanImpl:async()=>scan(),chromeExecutableImpl:async()=>({path:null,candidates:['C:/a/chrome.exe','C:/b/chrome.exe']}),serverVersion:'0.5.0'}),/Checked: C:\/a\/chrome\.exe, C:\/b\/chrome\.exe/);

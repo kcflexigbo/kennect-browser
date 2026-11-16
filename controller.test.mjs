@@ -43,3 +43,14 @@ test('window targeting in tab commands requires the extension',()=>{
   assert.match(r.stderr,/requires the Kennect Browser extension/);
  }
 });
+test('ensure validates options without launching',()=>{
+ for(const arg of ['{"timeoutMs":1000}','{"profileDirectory":""}']){
+  const r=run('ensure',arg);
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/Invalid/);
+ }
+});
+test('ensure rejects malformed options',()=>{
+ const r=run('ensure','not json');
+ assert.notEqual(r.status,0);
+});

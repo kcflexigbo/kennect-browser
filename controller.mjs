@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {bridgeCall,listProfiles} from './bridge-client.mjs';
+import {ensureBrowser} from './ensure.mjs';
 import {bridgeDirectory,writeDefaultProfile} from './profiles.mjs';
 import {browserProfile} from './platform.mjs';
 const dedicatedProfile=browserProfile();
@@ -25,6 +26,11 @@ try{
   if(!entry.responsive)throw new Error(`Browser profile ${profileId} is not responding. Reopen Chrome in that profile.`);
   await writeDefaultProfile(bridgeDirectory(),profileId);
   await new Promise(r=>process.stdout.write(`Default browser profile set to ${profileId}.\n`,r));process.exit(0);
+ }
+ if(command==='ensure'){
+  const options=JSON.parse(args[0]||'{}');
+  const result=await ensureBrowser(options);
+  await new Promise(r=>process.stdout.write(JSON.stringify(result)+'\n',r));process.exit(0);
  }
  const bridge=await bridgeCall(command,args,process.env.KENNECT_BROWSER_TAB_ID,process.env.KENNECT_BROWSER_PROFILE_ID);
  if(bridge){let output;if(command==='screenshot'){await writeFile(args[0],Buffer.from(bridge.result.png,'base64'));output=args[0]}else output=typeof bridge.result==='string'?bridge.result:JSON.stringify(bridge.result);await new Promise(r=>process.stdout.write(output+'\n',r));process.exit(0);}

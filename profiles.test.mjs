@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {parseBrowserCommandLine,browserProfileId,browserIdentityFromProcesses,selectProfile,readProfileConfig,writeDefaultProfile} from './profiles.mjs';
+import {parseBrowserCommandLine,browserProfileId,browserIdentityFromProcesses,selectProfile,readProfileConfig,writeDefaultProfile,chromeProfiles,chooseExtensionProfile,defaultUserDataDir} from './profiles.mjs';
 
 const first={profileId:'chrome:Default:aaaaaa',responsive:true};
 const second={profileId:'chrome:Profile 1:bbbbbb',responsive:true};
@@ -146,4 +146,49 @@ test('colons are stripped from a label so the ID stays parseable',()=>{
  const id=browserProfileId(baseIdentity(),'instance-a','Work: main');
  assert.equal(id.split(':').length,3);
  assert.equal(id.split(':')[1],'Work main');
+});
+const EXTENSION='bbnpijhhjbmhblobjckieabgmngeicbg';
+async function chromeFixture({lastUsed='Default',lastActive=[],profiles}){
+ const dir=await mkdtemp(join(tmpdir(),'kennect-chrome-profiles-'));
+ const info={};
+ for(const p of profiles){
+  info[p.directory]={name:p.name??p.directory,...(p.activeTime!==undefined?{active_time:p.activeTime}:{})};
+  await mkdir(join(dir,p.directory),{recursive:true});
+  const settings=p.extension===undefined?{}:{[EXTENSION]:p.extension};
+  await writeFile(join(dir,p.directory,p.file??'Secure Preferences'),JSON.stringify({extensions:{settings}}));
+ }
+ await writeFile(join(dir,'Local State'),JSON.stringify({profile:{last_used:lastUsed,last_active_profiles:lastActive,info_cache:info}}));
+ return dir;
+}
+test('chrome profile scan prefers the last-used extension profile',async()=>{
+ const dir=await chromeFixture({lastUsed:'Profile 1',lastActive:['Profile 2'],profiles:[{directory:'Default',activeTime:3},{directory:'Profile 1',activeTime:2,extension:{location:4}},{directory:'Profile 2',activeTime:1,extension:{location:4}}]});
+ try{const scan=await chromeProfiles({userDataDir:dir,extensionId:EXTENSION});assert.equal(chooseExtensionProfile(scan).directory,'Profile 1');}finally{await rm(dir,{recursive:true,force:true})}
+});
+test('chrome profile scan falls back to recent and then active time',async()=>{
+ const a=await chromeFixture({lastUsed:'Default',lastActive:['Profile 2','Profile 1'],profiles:[{directory:'Default',activeTime:9},{directory:'Profile 1',activeTime:5,extension:{location:4}},{directory:'Profile 2',activeTime:1,extension:{location:4}}]});
+ try{const scan=await chromeProfiles({userDataDir:a,extensionId:EXTENSION});assert.equal(chooseExtensionProfile(scan).directory,'Profile 2');}finally{await rm(a,{recursive:true,force:true})}
+ const b=await chromeFixture({lastUsed:'Default',lastActive:[],profiles:[{directory:'Default',activeTime:9},{directory:'Profile 1',activeTime:2,extension:{location:4}},{directory:'Profile 2',activeTime:7,extension:{location:4}}]});
+ try{const scan=await chromeProfiles({userDataDir:b,extensionId:EXTENSION});assert.equal(chooseExtensionProfile(scan).directory,'Profile 2');}finally{await rm(b,{recursive:true,force:true})}
+});
+test('chrome profile scan reads Preferences only when Secure Preferences is empty',async()=>{
+ const dir=await chromeFixture({profiles:[{directory:'Default',extension:{location:4},file:'Preferences'}]});
+ try{const scan=await chromeProfiles({userDataDir:dir,extensionId:EXTENSION});assert.equal(scan.profiles[0].extensionEnabled,true);}finally{await rm(dir,{recursive:true,force:true})}
+});
+test('chrome profile scan treats disabled entries and bad files as not enabled',async()=>{
+ const dir=await chromeFixture({profiles:[{directory:'Default',extension:{state:0}},{directory:'Profile 1',extension:{location:4,disable_reasons:['DISABLE_NOT_VERIFIED']}}]});
+ try{
+  const scan=await chromeProfiles({userDataDir:dir,extensionId:EXTENSION});
+  assert.ok(scan.profiles.every(p=>!p.extensionEnabled));
+  assert.equal(chooseExtensionProfile(scan),null);
+  await writeFile(join(dir,'Profile 1','Secure Preferences'),'not json');
+  const again=await chromeProfiles({userDataDir:dir,extensionId:EXTENSION});
+  assert.equal(again.profiles.length,2);
+ }finally{await rm(dir,{recursive:true,force:true})}
+});
+test('chrome profile scan reports a missing Local State clearly',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'kennect-chrome-empty-'));
+ try{await assert.rejects(chromeProfiles({userDataDir:dir,extensionId:EXTENSION}),/Local State|user-data-dir/);}finally{await rm(dir,{recursive:true,force:true})}
+});
+test('default user data directories are exported',()=>{
+ assert.equal(defaultUserDataDir('chrome',{...windows,exePath:''}),'C:\\Users\\Example\\AppData\\Local\\Google\\Chrome\\User Data');
 });

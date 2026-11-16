@@ -25,7 +25,7 @@ function commandValue(command,flag){
  const match=command.match(new RegExp(flag+'=(?:"([^"]*)"|(\\S+))'));
  return match?(match[1]??match[2]):null;
 }
-function defaultUserDataDir(browser,{platform,home,env,exePath=''}){
+export function defaultUserDataDir(browser,{platform,home,env,exePath=''}){
  const p=platform==='win32'?path.win32:path.posix;
  if(platform==='win32'){
   const local=env.LOCALAPPDATA||p.join(home,'AppData','Local');
@@ -47,6 +47,35 @@ function defaultUserDataDir(browser,{platform,home,env,exePath=''}){
  if(browser==='brave')return p.join(home,'.config','BraveSoftware','Brave-Browser');
  if(browser==='chromium')return p.join(home,'.config','chromium');
  return p.join(home,'.config','google-chrome');
+}
+export async function chromeProfiles({userDataDir,extensionId,readFileImpl=readFile}){
+ const statePath=path.join(userDataDir,'Local State');
+ let state;
+ try{state=JSON.parse(await readFileImpl(statePath,'utf8'))}catch{throw new Error(`Chrome Local State was not found or could not be read at ${statePath}. This version does not scan a custom --user-data-dir, Chrome Beta, Canary, or SxS install.`)}
+ const profile=state?.profile??{};
+ const lastUsed=typeof profile.last_used==='string'?profile.last_used:null;
+ const lastActive=Array.isArray(profile.last_active_profiles)?profile.last_active_profiles.filter(item=>typeof item==='string'):[];
+ const profiles=[];
+ for(const [directory,meta] of Object.entries(profile.info_cache??{})){
+  let setting=null;
+  for(const file of ['Secure Preferences','Preferences']){
+   try{
+    const prefs=JSON.parse(await readFileImpl(path.join(userDataDir,directory,file),'utf8'));
+    const found=prefs?.extensions?.settings?.[extensionId];
+    if(found){setting=found;break}
+   }catch{}
+  }
+  const disabled=!!setting&&(Number(setting.state)===0||(Array.isArray(setting.disable_reasons)&&setting.disable_reasons.length>0));
+  profiles.push({directory,name:typeof meta?.name==='string'&&meta.name?meta.name:directory,activeTime:Number.isFinite(meta?.active_time)?meta.active_time:null,extensionEnabled:!!setting&&!disabled,extensionPath:typeof setting?.path==='string'?setting.path:null});
+ }
+ return {userDataDir,lastUsed,lastActive,profiles};
+}
+export function chooseExtensionProfile(scan){
+ const byDirectory=new Map((scan?.profiles??[]).map(profile=>[profile.directory,profile]));
+ const enabled=directory=>byDirectory.get(directory)?.extensionEnabled===true;
+ if(typeof scan?.lastUsed==='string'&&enabled(scan.lastUsed))return byDirectory.get(scan.lastUsed);
+ for(const directory of scan?.lastActive??[])if(enabled(directory))return byDirectory.get(directory);
+ return [...(scan?.profiles??[])].filter(profile=>profile.extensionEnabled).sort((a,b)=>(b.activeTime??-Infinity)-(a.activeTime??-Infinity))[0]??null;
 }
 export function parseBrowserCommandLine(command,options={}){
  if(typeof command!=='string')return null;

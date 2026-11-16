@@ -153,13 +153,19 @@ async function updateWindow(windowId,changes,sessionId){
    const conflict=all.find(w=>w.id!==windowId&&String(windowRegistry[w.id]?.name??'').trim().toLowerCase()===name.toLowerCase());
    if(conflict)throw Error(`Window name "${name}" is already used by window ${conflict.id}.`);
   }
-  if(changes.purpose!==undefined)entry.purpose=changes.purpose?validateWindowPurpose(changes.purpose):null;
-  if(name!==undefined)entry.name=name;
+  const purpose=changes.purpose===undefined?undefined:(changes.purpose?validateWindowPurpose(changes.purpose):null);
+  if(changes.claim===true){
+   if(!(name??entry.name))throw Error('A window claim requires a name.');
+   const lease=changes.leaseMs??entry.leaseMs??1800000;
+   if(!Number.isInteger(lease)||lease<60000||lease>86400000)throw Error('Invalid lease duration.');
+  }
   const update={};
   for(const key of ['width','height','left','top','focused','state'])if(changes[key]!==undefined)update[key]=changes[key];
   if(changes.width!==undefined)update.state='normal';
   if(Object.keys(update).length)await chrome.windows.update(windowId,update);
   if(changes.state!==undefined&&changes.width!==undefined&&changes.state!=='normal')await chrome.windows.update(windowId,{state:changes.state});
+  if(purpose!==undefined)entry.purpose=purpose;
+  if(name!==undefined)entry.name=name;
   if(changes.claim===true){claimWindow(entry,sessionId,changes.leaseMs);}
   else if(changes.claim===false){if(activeClaim(entry)&&entry.ownerSession!==sessionId&&!changes.force)throw Error(`Window ${windowId} is claimed by another agent.`);releaseWindow(entry);}
   if(changes.claim===undefined)renewWindowClaim(entry,sessionId);
@@ -201,7 +207,8 @@ function releaseWindow(entry){entry.ownerSession=null;entry.claimedAt=null;entry
 async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
- await stateReady;
+ sessionId=sessionId||'local';
+ await Promise.all([stateReady,windowsReady]);
  if(command==='download-status'){
   await downloadsReady;
   const downloadId=Number(args[0]);if(!Number.isInteger(downloadId)||!trackedDownloads.has(downloadId))throw Error('Unknown download ID for this session.');
@@ -211,12 +218,12 @@ async function action({command,args=[],tabId,sessionId='local'}){
   return JSON.stringify(status);
  }
  if(command==='status'&&!connectedTab&&!tabId)return JSON.stringify({transport:'extension',connected:true,tabId:null});
- if(command==='open-tab'){
+ if(command==='open-tab')return withWindowRegistry(async()=>{
   if(!allowed(args[0]))throw Error('Only HTTP and HTTPS websites can be opened.');
   let targetWindowId;
   if(args[3]!==undefined&&args[3]!=='')targetWindowId=Number(args[3]);
-  else if(Number.isInteger(connectedTab))targetWindowId=(await chrome.tabs.get(connectedTab)).windowId;
-  else targetWindowId=(await chrome.windows.getLastFocused({windowTypes:['normal']})).id;
+  else if(Number.isInteger(connectedTab)){const current=await chrome.tabs.get(connectedTab).catch(()=>null);if(current)targetWindowId=current.windowId;}
+  if(targetWindowId===undefined)targetWindowId=(await chrome.windows.getLastFocused({windowTypes:['normal']})).id;
   if(!Number.isInteger(targetWindowId)||targetWindowId<0)throw Error('Invalid window ID.');
   assertWindowAccess(targetWindowId,sessionId);
   const n=await chrome.tabs.create({url:args[0],windowId:targetWindowId});approvedOrigins.add(new URL(args[0]).origin);await tab(n.id,true);connectedTab=n.id;
@@ -224,7 +231,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
   let groupId=null;const title=args[1],color=args[2];
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),windowId:targetWindowId,...(groupId===null?{}:{groupId})});
- }
+ });
  if(command==='close-window')return closeWindow(Number(args[0]),sessionId,args[1]==='1');
  if(command==='update-window')return updateWindow(Number(args[0]),JSON.parse(args[1]||'{}'),sessionId);
  if(command==='open-window')return openWindow(JSON.parse(args[0]||'{}'),sessionId);
@@ -252,8 +259,8 @@ async function action({command,args=[],tabId,sessionId='local'}){
   case 'group':{const ids=JSON.parse(args[0]).map(Number);for(const target of ids)await tab(target);const groupId=await chrome.tabs.group({tabIds:ids});await chrome.tabGroups.update(groupId,{title:args[1]||'Codex',color:args[2]||'cyan'});const grouped=(await chrome.tabs.query({groupId})).filter(t=>ids.includes(t.id));return JSON.stringify({groupId,tabIds:grouped.map(t=>t.id)});}
   case 'group-update':{const groupId=Number(args[0]),changes=JSON.parse(args[1]);const all=await chrome.tabs.query({groupId});if(!all.length||!all.every(t=>attached.has(t.id)&&approved(t.url)))throw Error('Connect every tab in this group before managing it.');await chrome.tabGroups.update(groupId,changes);return 'Group updated.';}
   case 'ungroup':{const ids=JSON.parse(args[0]);for(const target of ids)await tab(Number(target));await chrome.tabs.ungroup(ids.map(Number));return 'Tabs ungrouped.';}
-  case 'move-tab':{const sourceWindowId=t.windowId;const destinationWindowId=args[1]!==undefined&&args[1]!==''?Number(args[1]):sourceWindowId;if(!Number.isInteger(destinationWindowId)||destinationWindowId<0)throw Error('Invalid window ID.');assertWindowAccess(sourceWindowId,sessionId);if(destinationWindowId!==sourceWindowId)assertWindowAccess(destinationWindowId,sessionId);await chrome.tabs.move(id,{index:Number(args[0]),...(destinationWindowId!==sourceWindowId?{windowId:destinationWindowId}:{})});renewWindowClaim(windowRegistry[sourceWindowId],sessionId);if(destinationWindowId!==sourceWindowId)renewWindowClaim(windowRegistry[destinationWindowId],sessionId);await saveWindowRegistry();return 'Tab moved.';}
-  case 'resize':{const width=Number(args[0]),height=Number(args[1]);if(width<320||height<240||width>4000||height>4000)throw Error('Invalid window size');const targetWindowId=args[2]!==undefined&&args[2]!==''?Number(args[2]):t.windowId;if(!Number.isInteger(targetWindowId)||targetWindowId<0)throw Error('Invalid window ID.');assertWindowAccess(targetWindowId,sessionId);await chrome.windows.update(targetWindowId,{width,height});renewWindowClaim(windowRegistry[targetWindowId],sessionId);await saveWindowRegistry();return 'Window resized.';}
+  case 'move-tab':{const sourceWindowId=t.windowId;const destinationWindowId=args[1]!==undefined&&args[1]!==''?Number(args[1]):sourceWindowId;if(!Number.isInteger(destinationWindowId)||destinationWindowId<0)throw Error('Invalid window ID.');return withWindowRegistry(async()=>{assertWindowAccess(sourceWindowId,sessionId);if(destinationWindowId!==sourceWindowId)assertWindowAccess(destinationWindowId,sessionId);await chrome.tabs.move(id,{index:Number(args[0]),...(destinationWindowId!==sourceWindowId?{windowId:destinationWindowId}:{})});renewWindowClaim(windowRegistry[sourceWindowId],sessionId);if(destinationWindowId!==sourceWindowId)renewWindowClaim(windowRegistry[destinationWindowId],sessionId);await saveWindowRegistry();return 'Tab moved.';});}
+  case 'resize':{const width=Number(args[0]),height=Number(args[1]);if(width<320||height<240||width>4000||height>4000)throw Error('Invalid window size');const targetWindowId=args[2]!==undefined&&args[2]!==''?Number(args[2]):t.windowId;if(!Number.isInteger(targetWindowId)||targetWindowId<0)throw Error('Invalid window ID.');return withWindowRegistry(async()=>{assertWindowAccess(targetWindowId,sessionId);await chrome.windows.update(targetWindowId,{width,height});renewWindowClaim(windowRegistry[targetWindowId],sessionId);await saveWindowRegistry();return 'Window resized.';});}
   case 'file-inputs':{const {root}=await cdp(id,'DOM.getDocument',{depth:-1,pierce:true});const {nodeIds}=await cdp(id,'DOM.querySelectorAll',{nodeId:root.nodeId,selector:'input[type=file]'});const result=[];for(const nodeId of nodeIds){const {node}=await cdp(id,'DOM.describeNode',{nodeId});result.push({nodeId:node.backendNodeId,attributes:node.attributes})}return JSON.stringify(result);}
   case 'upload':{const paths=JSON.parse(args[1]);if(!Array.isArray(paths)||!paths.length||!paths.every(p=>typeof p==='string'&&(p.startsWith('/')||/^[A-Za-z]:[\\/]/.test(p))))throw Error('Use absolute local file paths.');await cdp(id,'DOM.setFileInputFiles',{backendNodeId:Number(args[0]),files:paths});return 'Files attached. Verify before submitting.';}
   case 'download':{

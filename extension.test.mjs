@@ -1,7 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFile} from 'node:fs/promises';
-async function environment(){
+async function environment(options={}){
  const pages=new Map([[1,{id:1,url:'https://www.zhipin.com/',title:'BOSS',windowId:1}],[2,{id:2,url:'https://example.com/',title:'Example',windowId:1}]]);const windows=new Map([[1,{id:1,focused:true,state:'normal',left:0,top:0,width:1200,height:800,type:'normal'}]]);let nextWindowId=10,nextTabId=10;let popup;const calls=[];const lifecycle={};const saved={};const sessionSaved={};const attachedTabs=new Set();const posted=[];const downloadCalls=[];let nativeConnections=0;
  const event=()=>({addListener(){}});const chrome={tabs:{get:async id=>pages.get(id),query:async options=>options.active?[pages.get(1)]:options.windowId!==undefined?[...pages.values()].filter(t=>t.windowId===options.windowId):options.groupId!==undefined?[...pages.values()].filter(t=>t.groupId===options.groupId):[...pages.values()],create:async({url,windowId})=>{const t={id:nextTabId++,url,title:'New tab',windowId:windowId??1};pages.set(t.id,t);return t},move:async(tabIds,{windowId}={})=>{for(const id of [].concat(tabIds)){const t=pages.get(Number(id));if(t&&windowId!==undefined)t.windowId=windowId}}},windows:{create:async options=>{const id=nextWindowId++;const win={id,focused:options.focused??false,state:'normal',left:options.left??0,top:options.top??0,width:options.width??1200,height:options.height??800,type:'normal'};windows.set(id,win);const tab={id:nextTabId++,url:options.url,title:'New window',windowId:id};pages.set(tab.id,tab);return{...win,tabs:[tab]}},get:async id=>windows.get(id),getAll:async()=>[...windows.values()].map(w=>({...w,tabs:[...pages.values()].filter(t=>t.windowId===w.id)})),remove:async id=>{windows.delete(id);for(const[tabId,tab]of pages)if(tab.windowId===id)pages.delete(tabId)},update:async(id,changes)=>Object.assign(windows.get(id),changes),getLastFocused:async()=>[...windows.values()].find(w=>w.focused)??[...windows.values()][0]},debugger:{attach:async({tabId})=>{if(attachedTabs.has(tabId))throw Error('Another debugger is already attached to the tab.');attachedTabs.add(tabId)},detach:async({tabId})=>{attachedTabs.delete(tabId)},onDetach:event(),onEvent:event(),sendCommand:async(target,method)=>{calls.push(method);if(method==='Runtime.enable')throw Error('Continuous console collection must not be enabled');return method==='Accessibility.getFullAXTree'?{nodes:[]}:{};}},runtime:{id:'test',getManifest:()=>({version:'0.4.0'}),onStartup:{addListener(fn){lifecycle.startup=fn}},onInstalled:{addListener(fn){lifecycle.installed=fn}},onMessage:{addListener(fn){popup=fn}},connectNative:()=>{nativeConnections++;return({onMessage:{addListener(fn){queueMicrotask(()=>fn({type:'ready'}))}},onDisconnect:event(),postMessage(message){posted.push(message)},disconnect(){}})}},storage:{local:{get:async()=>saved,set:async value=>Object.assign(saved,value)},session:{get:async keys=>{if(keys==null)return{...sessionSaved};if(Array.isArray(keys))return Object.fromEntries(keys.filter(k=>k in sessionSaved).map(k=>[k,sessionSaved[k]]));if(typeof keys==='string')return keys in sessionSaved?{[keys]:sessionSaved[keys]}:{};return{}},set:async value=>Object.assign(sessionSaved,value),remove:async keys=>{for(const key of [].concat(keys??[]))delete sessionSaved[key]}}},tabGroups:{query:async()=>[],update:async()=>{}},downloads:{download:async options=>{downloadCalls.push(options);return 42},search:async()=>[]}};
+ if(options.delayRegistryGet){const get=chrome.storage.session.get;chrome.storage.session.get=async keys=>{const result=await get(keys);if(keys==='windowRegistry'||(Array.isArray(keys)&&keys.includes('windowRegistry')))await new Promise(r=>setTimeout(r,50));return result}}
  let scope;const load=async()=>{scope=vm.createContext({chrome,URL,Map,Set,Error,Number,JSON,Object,setTimeout,clearTimeout,crypto,navigator:{userAgent:'test-agent'}});vm.runInContext(await readFile(new URL('./extension/worker.js',import.meta.url),'utf8'),scope);await new Promise(resolve=>setImmediate(resolve))};await load();
  const connect=()=>new Promise(resolve=>popup({type:'connect'},{id:'test'},resolve));
  return{pages,windows,calls,lifecycle,saved,sessionSaved,seedRegistry:async value=>{sessionSaved.windowRegistry=value;await load()},get scope(){return scope},connect,restart:load,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
@@ -300,4 +301,30 @@ test('implicit window targets are blocked by another session claim',async()=>{
  await e.scope.action({command:'select-tab',tabId:Number(opened.tabId),sessionId:'agent-b'});
  await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-b'}),/claimed by another agent/i);
  await assert.rejects(e.scope.action({command:'resize',args:['500','800'],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('a delayed registry load cannot bypass a claim',async()=>{
+ const e=await environment({delayRegistryGet:true});
+ e.sessionSaved.windowRegistry={1:{windowId:1,name:'locked',purpose:null,ownerSession:'agent-a',claimedAt:Date.now(),leaseUntil:Date.now()+60000,leaseMs:60000,createdByTool:true,createdAt:Date.now()}};
+ await e.restart();
+ await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/x','','','1'],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('open-tab falls back when the connected tab is gone',async()=>{
+ const e=await environment();await e.connect();
+ const first=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/a','',''],sessionId:'agent-a'}));
+ e.pages.delete(Number(first.targetId));
+ const second=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(second.targetId)).windowId,1);
+});
+test('an empty session id is treated as local',async()=>{
+ const e=await environment();await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'local-window',claim:true})],sessionId:''}));
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].ownerSession,'local');
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'}),/claimed by another agent/i);
+});
+test('a rejected claim leaves the window unchanged',async()=>{
+ const e=await environment();await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:640,height:480,claim:true})],sessionId:'agent-a'}),/requires a name/i);
+ assert.equal(e.windows.get(opened.windowId).width,1200);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].ownerSession,null);
 });

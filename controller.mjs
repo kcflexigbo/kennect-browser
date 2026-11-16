@@ -2,12 +2,14 @@
 // Independent browser adapter. Accessibility and native input by default; JavaScript is explicit.
 // Do not enable Runtime/console collection: BOSS logs objects with side-effecting getters.
 import {readFile,writeFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {bridgeCall,listProfiles} from './bridge-client.mjs';
 import {bridgeDirectory,writeDefaultProfile} from './profiles.mjs';
 import {browserProfile} from './platform.mjs';
 const dedicatedProfile=browserProfile();
+if(!process.env.KENNECT_BROWSER_SESSION_ID)process.env.KENNECT_BROWSER_SESSION_ID=randomUUID();
 const [command='snapshot',...args]=process.argv.slice(2);
 function checkUrl(value){
  const url=new URL(value);

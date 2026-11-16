@@ -10,7 +10,7 @@ import {writeDefaultProfile} from './profiles.mjs';
 
 function frame(value){const body=Buffer.from(JSON.stringify(value));const head=Buffer.alloc(4);head.writeUInt32LE(body.length);return Buffer.concat([head,body])}
 async function waitFor(check){for(let i=0;i<100;i++){if(await check())return true;await new Promise(r=>setTimeout(r,25))}return false}
-function respond(child,label){
+function respond(child,label,onRequest){
  let buffer=Buffer.alloc(0);
  child.stdout.on('data',chunk=>{
   buffer=Buffer.concat([buffer,chunk]);
@@ -20,14 +20,15 @@ function respond(child,label){
    const message=JSON.parse(buffer.subarray(4,size+4));
    buffer=buffer.subarray(size+4);
    if(message.type!=='request')continue;
+   onRequest?.(message);
    const result=message.command==='ping'?'pong':message.command==='status'?JSON.stringify({title:label,url:'https://example.com/',transport:'extension',tabId:1}):`${label} ${message.command}`;
    child.stdin.write(frame({type:'response',id:message.id,result}));
   }
  });
 }
-async function startHost(directory,label,instanceId,{answer=true}={}){
+async function startHost(directory,label,instanceId,{answer=true,onRequest}={}){
  const child=spawn(process.execPath,[fileURLToPath(new URL('./native-host.mjs',import.meta.url))],{stdio:['pipe','pipe','pipe'],env:{...process.env,KENNECT_BROWSER_BRIDGE_DIR:directory,KENNECT_BROWSER_SKIP_IDENTITY:'1'}});
- if(answer)respond(child,label);
+ if(answer)respond(child,label,onRequest);
  const file=join(directory,`${child.pid}.json`);
  assert.ok(await waitFor(async()=>{try{await readFile(file);return true}catch{return false}}),'discovery file missing');
  child.stdin.write(frame({type:'hello',instanceId,extensionVersion:'0.3.0',userAgent:'test-agent'}));
@@ -62,6 +63,21 @@ test('an explicit profile never falls back to the dedicated browser',async()=>{
   assert.equal(await bridgeCall('snapshot',[],undefined,undefined,{directory,probeTimeoutMs:200}),null);
   await assert.rejects(bridgeCall('snapshot',[],undefined,'chrome:Default:aaaaaa',{directory,probeTimeoutMs:200}),/Unknown browser profile/);
  }finally{await rm(directory,{recursive:true,force:true})}
+});
+test('bridge client sends the agent session id to the native host',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'kennect-bridge-session-'));
+ const requests=[];
+ const a=await startHost(directory,'A','dddddddd4444',{onRequest:r=>requests.push(r)});
+ const previous=process.env.KENNECT_BROWSER_SESSION_ID;
+ process.env.KENNECT_BROWSER_SESSION_ID='agent-test';
+ try{
+  await bridgeCall('snapshot',[],undefined,a.profile,{directory,probeTimeoutMs:1500});
+  assert.ok(requests.some(r=>r.sessionId==='agent-test'));
+ }finally{
+  if(previous===undefined)delete process.env.KENNECT_BROWSER_SESSION_ID;
+  else process.env.KENNECT_BROWSER_SESSION_ID=previous;
+  await stopHost(a);await rm(directory,{recursive:true,force:true});
+ }
 });
 test('an unresponsive connection is listed but cannot be selected',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'kennect-bridge-test-'));

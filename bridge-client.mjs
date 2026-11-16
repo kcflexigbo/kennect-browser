@@ -41,7 +41,7 @@ function profileIdOf(candidate){
 }
 function callHost(candidate,command,args,tabId,timeoutMs){
  return new Promise((resolve,reject)=>{
-  const socket=net.connect(candidate.path),body=Buffer.from(JSON.stringify({command,args,tabId,...(candidate.token?{token:candidate.token}:{})})),head=Buffer.alloc(4);head.writeUInt32LE(body.length);
+  const socket=net.connect(candidate.path),body=Buffer.from(JSON.stringify({command,args,tabId,sessionId:process.env.KENNECT_BROWSER_SESSION_ID??'',...(candidate.token?{token:candidate.token}:{})})),head=Buffer.alloc(4);head.writeUInt32LE(body.length);
   let buffer=Buffer.alloc(0),settled=false;
   const done=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(value)};
   const timer=setTimeout(()=>done(Object.assign(Error('Browser extension did not respond; action was not retried.'),{code:'TIMEOUT'})),timeoutMs);

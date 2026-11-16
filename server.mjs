@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {createInterface} from 'node:readline';
+import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
@@ -7,6 +8,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const execute=promisify(execFile),cli=fileURLToPath(new URL('./controller.mjs',import.meta.url));
+if(!process.env.KENNECT_BROWSER_SESSION_ID)process.env.KENNECT_BROWSER_SESSION_ID=randomUUID();
 const tabId={type:'string',minLength:1,maxLength:100,description:'Optional tab ID from browser_tabs.'};
 const profileId={type:'string',minLength:1,maxLength:200,description:'Profile ID from browser_profiles. Omit to use the configured default profile.'};
 const nodeId={type:'integer',minimum:1,description:'Backend node ID from the most recent browser_snapshot for this tab.'};

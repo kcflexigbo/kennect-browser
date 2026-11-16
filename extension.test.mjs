@@ -222,3 +222,45 @@ test('closing a tracked window removes it and its registry entry',async()=>{
  assert.equal(e.windows.has(opened.windowId),false);
  assert.equal(e.sessionSaved.windowRegistry[opened.windowId],undefined);
 });
+test('a claim blocks window-scoped updates from another session',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'}),/claimed by another agent/i);
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800,force:true})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('page reads still work in a claimed window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await e.scope.action({command:'snapshot',tabId:Number(opened.tabId),sessionId:'agent-b'});
+ assert.ok(e.calls.includes('Accessibility.getFullAXTree'));
+});
+test('an expired lease no longer blocks another session',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ e.sessionSaved.windowRegistry[opened.windowId].leaseUntil=Date.now()-1;
+ await e.restart();
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('releasing a claim allows another session to update',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({claim:false})],sessionId:'agent-a'});
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-b'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+});
+test('an owner mutation renews the lease',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'mobile',claim:true})],sessionId:'agent-a'}));
+ const before=Date.now();
+ e.sessionSaved.windowRegistry[opened.windowId].leaseUntil=before+5000;
+ await e.restart();
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-a'});
+ assert.ok(e.sessionSaved.windowRegistry[opened.windowId].leaseUntil>before+10000);
+});

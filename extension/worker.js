@@ -136,7 +136,7 @@ async function openWindow(options,sessionId){
 }
 async function updateWindow(windowId,changes,sessionId){
  if(!Number.isInteger(windowId)||windowId<0)throw Error('Invalid window ID.');
- const keys=['width','height','left','top','focused','state','name','purpose'];
+ const keys=['width','height','left','top','focused','state','name','purpose','claim'];
  if(!keys.some(key=>changes[key]!==undefined))throw Error('Provide at least one window change.');
  validateWindowBounds(changes);
  const states=['normal','minimized','maximized','fullscreen'];
@@ -147,6 +147,7 @@ async function updateWindow(windowId,changes,sessionId){
   pruneWindowRegistry(live);
   const entry=windowRegistry[windowId];
   if(!live.has(windowId)||!entry)throw Error('Unknown window ID. Refresh with browser_windows.');
+  assertWindowAccess(windowId,sessionId,{force:changes.force===true});
   const name=changes.name===undefined?undefined:validateWindowName(changes.name);
   if(name){
    const conflict=all.find(w=>w.id!==windowId&&String(windowRegistry[w.id]?.name??'').trim().toLowerCase()===name.toLowerCase());
@@ -159,6 +160,9 @@ async function updateWindow(windowId,changes,sessionId){
   if(changes.width!==undefined)update.state='normal';
   if(Object.keys(update).length)await chrome.windows.update(windowId,update);
   if(changes.state!==undefined&&changes.width!==undefined&&changes.state!=='normal')await chrome.windows.update(windowId,{state:changes.state});
+  if(changes.claim===true){claimWindow(entry,sessionId,changes.leaseMs);}
+  else if(changes.claim===false){if(activeClaim(entry)&&entry.ownerSession!==sessionId&&!changes.force)throw Error(`Window ${windowId} is claimed by another agent.`);releaseWindow(entry);}
+  if(changes.claim===undefined)renewWindowClaim(entry,sessionId);
   await saveWindowRegistry();
   const win=await chrome.windows.get(windowId);
   const tabs=await chrome.tabs.query({windowId});
@@ -181,6 +185,19 @@ async function closeWindow(windowId,sessionId,force){
   return JSON.stringify({closed:true,windowId});
  });
 }
+function assertWindowAccess(windowId,sessionId,{force=false}={}){
+ const entry=windowRegistry[windowId];
+ const claim=activeClaim(entry);
+ if(claim&&claim.ownerSession!==sessionId&&!force)throw Error(`Window ${windowId}${entry?.name?` "${entry.name}"`:''} is claimed by another agent until ${new Date(claim.leaseUntil).toISOString()}. Use another window or ask the user to release the claim.`);
+}
+function renewWindowClaim(entry,sessionId){if(entry?.ownerSession===sessionId&&activeClaim(entry))entry.leaseUntil=Date.now()+(entry.leaseMs??1800000)}
+function claimWindow(entry,sessionId,leaseMs){
+ if(!entry.name)throw Error('A window claim requires a name.');
+ const lease=leaseMs??entry.leaseMs??1800000;
+ if(!Number.isInteger(lease)||lease<60000||lease>86400000)throw Error('Invalid lease duration.');
+ entry.ownerSession=sessionId;entry.claimedAt=Date.now();entry.leaseMs=lease;entry.leaseUntil=Date.now()+lease;
+}
+function releaseWindow(entry){entry.ownerSession=null;entry.claimedAt=null;entry.leaseUntil=null}
 async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';

@@ -94,6 +94,13 @@ async function clearDeviceEmulation(sessionId,tabId){
   return JSON.stringify({tabId:String(t.id),cleared:true});
  });
 }
+async function applyStoredEmulation(id){
+ return withEmulationState(async()=>{
+  const state=emulations[id];if(!state||emulationApplied.has(id))return;
+  try{await applyEmulation(id,state);emulationApplied.add(id)}
+  catch(error){throw Error(`Could not reapply device emulation: ${error.message}`)}
+ });
+}
 async function identity(){if(instanceId)return instanceId;const saved=await chrome.storage.local.get('instanceId');instanceId=typeof saved.instanceId==='string'&&saved.instanceId?saved.instanceId:crypto.randomUUID();if(saved.instanceId!==instanceId)await chrome.storage.local.set({instanceId});return instanceId}
 async function accountEmail(){try{const info=await chrome.identity?.getProfileUserInfo?.({accountStatus:'ANY'});return typeof info?.email==='string'&&info.email?info.email.slice(0,40):''}catch{return ''}}
 async function announce(){const id=await identity();const saved=await chrome.storage.local.get('profileLabel');const manual=typeof saved.profileLabel==='string'?saved.profileLabel.trim().slice(0,40):'';const label=manual||await accountEmail();nativePort?.postMessage({type:'hello',instanceId:id,label,extensionVersion:chrome.runtime.getManifest().version,userAgent:globalThis.navigator?.userAgent??''})}
@@ -106,7 +113,7 @@ async function ensureAttached(t){if(attached.has(t.id))return;try{await chrome.d
 async function persistState(){await chrome.storage.session.set({approvedOrigins:[...approvedOrigins],connectedTab:connectedTab??null})}
 async function restoreState(){const s=await chrome.storage.session.get(['approvedOrigins','connectedTab']);for(const origin of s.approvedOrigins??[])approvedOrigins.add(origin);if(Number.isInteger(s.connectedTab))connectedTab=s.connectedTab}
 const stateReady=restoreState().catch(()=>{});
-async function tab(id,enable=false){const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');await ensureAttached(t);return t}
+async function tab(id,enable=false){const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');await ensureAttached(t);await applyStoredEmulation(t.id);return t}
 let nativeReady=false,nativeConnecting;
 let autoConnect=true,retryTimer,retryDelay=1000;
 function retryConnection(){
@@ -134,7 +141,8 @@ function connect(){
  });return nativeConnecting;
 }
 
-chrome.debugger.onDetach.addListener(({tabId})=>{attached.delete(tabId);watching.delete(tabId);requests.delete(tabId);consoleTabs.delete(tabId);consoleEntries.delete(tabId);const r=recordings.get(tabId);if(r){r.stopped=true;clearInterval(r.timer);}recordings.delete(tabId)});
+chrome.debugger.onDetach.addListener(({tabId})=>{attached.delete(tabId);emulationApplied.delete(tabId);watching.delete(tabId);requests.delete(tabId);consoleTabs.delete(tabId);consoleEntries.delete(tabId);const r=recordings.get(tabId);if(r){r.stopped=true;clearInterval(r.timer);}recordings.delete(tabId)});
+chrome.tabs.onRemoved.addListener(tabId=>{emulationApplied.delete(tabId);if(emulations[tabId])void withEmulationState(async()=>{delete emulations[tabId];await saveEmulations()}).catch(()=>{})});
 chrome.debugger.onEvent.addListener(({tabId},method,p)=>{
  if(consoleTabs.has(tabId)){
   let entry;if(method==='Runtime.consoleAPICalled')entry={type:p.type,text:p.args.map(a=>Object.hasOwn(a,'value')?String(a.value):a.description??a.type).join(' '),timestamp:p.timestamp};
@@ -163,7 +171,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
    if(t&&allowed(t.url)){approvedOrigins.add(new URL(t.url).origin);await tab(t.id,true);connectedTab=t.id;}
    await chrome.storage.session.set({connectionError:null});await persistState();return{ok:true,tabId:connectedTab};
   }
-  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();await chrome.storage.session.remove(['approvedOrigins','connectedTab']);return{ok:true}}
+  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();emulations={};emulationApplied.clear();await chrome.storage.session.remove(['approvedOrigins','connectedTab',EMULATION_KEY]);return{ok:true}}
   if(m.type==='status')return{ok:true,tabId:connectedTab,connected:!!nativePort&&nativeReady,autoConnect,error:(await chrome.storage.session.get('connectionError')).connectionError};
   throw Error('Unknown popup action');
  })().then(respond,e=>respond({ok:false,error:e.message}));return true;

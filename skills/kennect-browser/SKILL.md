@@ -26,6 +26,12 @@ Window bounds are outer window dimensions, not the page viewport. After `browser
 
 Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` in the current browser session can be closed, and the tool refuses to close the last normal window.
 
+## Starting a closed browser
+
+When no extension profile is connected and the user authorizes opening their browser, call `browser_ensure`. It reuses any responsive profile; otherwise it launches the last-used Chrome profile that has the Kennect extension, opens `about:blank`, and waits up to the requested timeout. `launched: false` means a profile was already connected. It opens a visible personal browser window, so obtain explicit authorization first and never use it to bypass a paused extension without the user.
+
+If it times out, ask the user to open the extension and click Connect; do not retry in a loop. Use the returned `profileId` for subsequent window calls. `browser_start` is the separate dedicated fallback profile without sign-ins and without the extension's extended tools.
+
 ## Connect and target
 
 - Discover the tools the task is likely to need together, then load additional definitions only as needed. Avoid dumping unrelated tool catalogs. Tab discovery can return private titles and full URL queries/fragments: do not echo or persist the entire inventory. Retain the target tab ID and a sanitized URL.

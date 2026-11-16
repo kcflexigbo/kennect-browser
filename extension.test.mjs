@@ -17,6 +17,9 @@ test('navigation to another origin names the new origin and the reselect recover
   assert.match(error.message,/https:\/\/example\.com/);
   assert.match(error.message,/browser_select_tab/);
   assert.match(error.message,/tabId 1/);
+  assert.match(error.message,/unrelated|unexpected/i);
+  assert.match(error.message,/decide/i);
+  assert.match(error.message,/check with the user/i);
   return true;
  });
  e.scope.chrome.tabs.update=async()=>{};

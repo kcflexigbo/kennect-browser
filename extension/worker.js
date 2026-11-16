@@ -108,7 +108,7 @@ chrome.storage.onChanged?.addListener?.((changes,area)=>{if(area==='local'&&chan
 const approvedOrigins=new Set();
 function allowed(url){try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}}
 function approved(url){return allowed(url)&&approvedOrigins.has(new URL(url).origin)}
-function notConnected(t){return Error(`This tab is on ${new URL(t.url).origin}, which is not connected yet. Select it again with browser_select_tab (tabId ${t.id}) to connect it; click Connect in the extension only if that fails.`)}
+function notConnected(t){return Error(`This tab is on ${new URL(t.url).origin}, which is not connected yet. Use the task context to decide whether it belongs: if it is part of this task and the new origin is expected, reselect it with browser_select_tab (tabId ${t.id}) and retry. If it is unrelated or the origin is unexpected, check with the user before connecting. Click Connect in the extension only if reselecting fails.`)}
 const cdp=(tabId,method,params={})=>chrome.debugger.sendCommand({tabId},method,params);
 async function ensureAttached(t){if(attached.has(t.id))return;try{await chrome.debugger.attach({tabId:t.id},'1.3')}catch(e){if(!/Another debugger is already attached/i.test(e?.message??''))throw e}attached.add(t.id)}
 async function persistState(){await chrome.storage.session.set({approvedOrigins:[...approvedOrigins],connectedTab:connectedTab??null})}

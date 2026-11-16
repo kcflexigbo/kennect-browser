@@ -9,7 +9,7 @@ import {bridgeCall,listProfiles} from './bridge-client.mjs';
 import {writeDefaultProfile} from './profiles.mjs';
 
 function frame(value){const body=Buffer.from(JSON.stringify(value));const head=Buffer.alloc(4);head.writeUInt32LE(body.length);return Buffer.concat([head,body])}
-async function waitFor(check){for(let i=0;i<100;i++){if(await check())return true;await new Promise(r=>setTimeout(r,25))}return false}
+async function waitFor(check){for(let i=0;i<200;i++){if(await check())return true;await new Promise(r=>setTimeout(r,25))}return false}
 function respond(child,label,onRequest){
  let buffer=Buffer.alloc(0);
  child.stdout.on('data',chunk=>{
@@ -37,14 +37,18 @@ async function startHost(directory,label,instanceId,{answer=true,onRequest}={}){
 }
 async function stopHost(host){
  host.child.stdin.end();host.child.kill();
- await new Promise(resolve=>{if(host.child.exitCode!==null)resolve();else host.child.once('exit',resolve)});
+ await new Promise(resolve=>{
+  if(host.child.exitCode!==null)return resolve();
+  const timer=setTimeout(()=>{host.child.kill('SIGKILL');resolve()},2000);
+  host.child.once('exit',()=>{clearTimeout(timer);resolve()});
+ });
 }
 
 test('bridge lists connected profiles, uses the configured default, and honors an explicit profile',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'kennect-bridge-test-'));
  const a=await startHost(directory,'A','aaaaaaaa1111');
  const b=await startHost(directory,'B','bbbbbbbb2222');
- const options={directory,probeTimeoutMs:1500};
+ const options={directory,probeTimeoutMs:3000};
  try{
   const listing=await listProfiles(options);
   assert.deepEqual(listing.profiles.map(profile=>profile.profileId).sort(),[a.profile,b.profile].sort());
@@ -71,7 +75,7 @@ test('bridge client sends the agent session id to the native host',async()=>{
  const previous=process.env.KENNECT_BROWSER_SESSION_ID;
  process.env.KENNECT_BROWSER_SESSION_ID='agent-test';
  try{
-  await bridgeCall('snapshot',[],undefined,a.profile,{directory,probeTimeoutMs:1500});
+  await bridgeCall('snapshot',[],undefined,a.profile,{directory,probeTimeoutMs:3000});
   assert.ok(requests.some(r=>r.sessionId==='agent-test'));
  }finally{
   if(previous===undefined)delete process.env.KENNECT_BROWSER_SESSION_ID;

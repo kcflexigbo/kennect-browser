@@ -1,6 +1,19 @@
 const HOST='com.kennect_browser.local';
 let nativePort,connectedTab,instanceId;const attached=new Set(),watching=new Set(),requests=new Map();const recordings=new Map(),consoleTabs=new Set(),consoleEntries=new Map(),trackedDownloads=new Map();
 const downloadsReady=chrome.storage.session.get('toolDownloads').then(saved=>{for(const entry of saved.toolDownloads??[])if(Array.isArray(entry)&&Number.isInteger(entry[0]))trackedDownloads.set(entry[0],entry[1])}).catch(()=>{});
+const WINDOW_REGISTRY_KEY='windowRegistry';
+let windowRegistry={};
+const windowsReady=chrome.storage.session.get(WINDOW_REGISTRY_KEY).then(saved=>{windowRegistry=Object.assign({},saved?.[WINDOW_REGISTRY_KEY]??{})}).catch(()=>{});
+let windowQueue=Promise.resolve();
+function withWindowRegistry(fn){const run=windowQueue.then(async()=>{await windowsReady;return fn()});windowQueue=run.catch(()=>{});return run}
+async function saveWindowRegistry(){await chrome.storage.session.set({[WINDOW_REGISTRY_KEY]:windowRegistry})}
+function activeClaim(entry,now=Date.now()){return entry&&entry.ownerSession&&Number(entry.leaseUntil)>now?entry:null}
+function ownerLabel(sessionId){return String(sessionId??'').slice(0,8)}
+function pruneWindowRegistry(liveIds){for(const key of Object.keys(windowRegistry))if(!liveIds.has(Number(key)))delete windowRegistry[key]}
+function windowSummary(win,entry,sessionId,tabs){
+ const claim=activeClaim(entry);
+ return{windowId:win.id,name:entry?.name??null,purpose:entry?.purpose??null,createdByTool:entry?.createdByTool??false,owner:claim?ownerLabel(claim.ownerSession):null,claimedByYou:!!claim&&claim.ownerSession===sessionId,claimedByOther:!!claim&&claim.ownerSession!==sessionId,leaseUntil:claim?new Date(claim.leaseUntil).toISOString():null,focused:!!win.focused,state:win.state??'normal',bounds:{left:win.left??0,top:win.top??0,width:win.width??0,height:win.height??0},tabCount:tabs.length,connectedTabCount:tabs.filter(t=>approved(t.url)&&attached.has(t.id)).length};
+}
 async function identity(){if(instanceId)return instanceId;const saved=await chrome.storage.local.get('instanceId');instanceId=typeof saved.instanceId==='string'&&saved.instanceId?saved.instanceId:crypto.randomUUID();if(saved.instanceId!==instanceId)await chrome.storage.local.set({instanceId});return instanceId}
 async function accountEmail(){try{const info=await chrome.identity?.getProfileUserInfo?.({accountStatus:'ANY'});return typeof info?.email==='string'&&info.email?info.email.slice(0,40):''}catch{return ''}}
 async function announce(){const id=await identity();const saved=await chrome.storage.local.get('profileLabel');const manual=typeof saved.profileLabel==='string'?saved.profileLabel.trim().slice(0,40):'';const label=manual||await accountEmail();nativePort?.postMessage({type:'hello',instanceId:id,label,extensionVersion:chrome.runtime.getManifest().version,userAgent:globalThis.navigator?.userAgent??''})}
@@ -78,7 +91,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
 chrome.runtime.onStartup.addListener(startBridge);
 chrome.runtime.onInstalled.addListener(startBridge);
 void startBridge();
-async function action({command,args=[],tabId}){
+async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
  await stateReady;
@@ -97,6 +110,18 @@ async function action({command,args=[],tabId}){
   let groupId=null;const title=args[1],color=args[2];
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
+ }
+ if(command==='windows'){
+  return withWindowRegistry(async()=>{
+   const all=await chrome.windows.getAll({populate:true,windowTypes:['normal']});
+   const live=new Set(all.map(w=>w.id));
+   pruneWindowRegistry(live);
+   const allTabs=await chrome.tabs.query({});
+   const name=String(args[0]??'').trim().toLowerCase();
+   const list=all.filter(w=>!name||String(windowRegistry[w.id]?.name??'').toLowerCase()===name).map(w=>windowSummary(w,windowRegistry[w.id],sessionId,allTabs.filter(t=>t.windowId===w.id)));
+   await saveWindowRegistry();
+   return JSON.stringify({windows:list});
+  });
  }
  if(command==='tabs'){const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null})))}
  if(command==='select-tab'){

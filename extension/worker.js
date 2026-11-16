@@ -58,7 +58,7 @@ async function tabForEmulation(id){
  const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');
  if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;
  if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');
- if(!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');
+ if(!approved(t.url))throw notConnected(t);
  await ensureAttached(t);
  return t;
 }
@@ -108,12 +108,13 @@ chrome.storage.onChanged?.addListener?.((changes,area)=>{if(area==='local'&&chan
 const approvedOrigins=new Set();
 function allowed(url){try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}}
 function approved(url){return allowed(url)&&approvedOrigins.has(new URL(url).origin)}
+function notConnected(t){return Error(`This tab is on ${new URL(t.url).origin}, which is not connected yet. Select it again with browser_select_tab (tabId ${t.id}) to connect it; click Connect in the extension only if that fails.`)}
 const cdp=(tabId,method,params={})=>chrome.debugger.sendCommand({tabId},method,params);
 async function ensureAttached(t){if(attached.has(t.id))return;try{await chrome.debugger.attach({tabId:t.id},'1.3')}catch(e){if(!/Another debugger is already attached/i.test(e?.message??''))throw e}attached.add(t.id)}
 async function persistState(){await chrome.storage.session.set({approvedOrigins:[...approvedOrigins],connectedTab:connectedTab??null})}
 async function restoreState(){const s=await chrome.storage.session.get(['approvedOrigins','connectedTab']);for(const origin of s.approvedOrigins??[])approvedOrigins.add(origin);if(Number.isInteger(s.connectedTab))connectedTab=s.connectedTab}
 const stateReady=restoreState().catch(()=>{});
-async function tab(id,enable=false){const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');await ensureAttached(t);await applyStoredEmulation(t.id);return t}
+async function tab(id,enable=false){const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');if(!enable&&!approved(t.url))throw notConnected(t);await ensureAttached(t);await applyStoredEmulation(t.id);return t}
 let nativeReady=false,nativeConnecting;
 let autoConnect=true,retryTimer,retryDelay=1000;
 function retryConnection(){

@@ -9,7 +9,22 @@ async function environment(options={}){
  return{pages,windows,calls,lifecycle,saved,sessionSaved,seedRegistry:async value=>{sessionSaved.windowRegistry=value;await load()},get scope(){return scope},connect,restart:load,posted:()=>posted,downloadCalls,nativeConnections:()=>nativeConnections,disconnect:()=>new Promise(resolve=>popup({type:'disconnect'},{id:'test'},resolve))};
 }
 test('extension requires a user connection before reading a tab',async()=>{const e=await environment();await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);assert.equal((await e.connect()).ok,true);await e.scope.action({command:'snapshot',tabId:1});assert.ok(e.calls.includes('Accessibility.getFullAXTree'));});
-test('navigation to another origin requires a fresh user connection',async()=>{const e=await environment();await e.connect();e.pages.get(1).url='https://example.com/';await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),/click Connect/i);});
+test('navigation to another origin names the new origin and the reselect recovery',async()=>{
+ const e=await environment();
+ await e.connect();
+ e.pages.get(1).url='https://example.com/sign-in';
+ await assert.rejects(e.scope.action({command:'snapshot',tabId:1}),error=>{
+  assert.match(error.message,/https:\/\/example\.com/);
+  assert.match(error.message,/browser_select_tab/);
+  assert.match(error.message,/tabId 1/);
+  return true;
+ });
+ e.scope.chrome.tabs.update=async()=>{};
+ e.scope.chrome.windows={update:async()=>{}};
+ await e.scope.action({command:'select-tab',tabId:1});
+ await e.scope.action({command:'snapshot',tabId:1});
+ assert.ok(e.calls.includes('Accessibility.getFullAXTree'));
+});
 test('grouping refuses tabs the user has not connected',async()=>{const e=await environment();await e.connect();await assert.rejects(e.scope.action({command:'group',args:['[1,2]','Test','cyan']}),/click Connect/i);});
 test('browser can connect from an internal page and create a website tab',async()=>{const e=await environment();e.pages.get(1).url='chrome://extensions/';e.scope.chrome.tabs.create=async({url})=>{const t={id:3,url,title:'New tab',windowId:1};e.pages.set(3,t);return t};assert.equal((await e.connect()).ok,true);assert.equal(JSON.parse(await e.scope.action({command:'status'})).transport,'extension');await e.scope.action({command:'open-tab',args:['https://example.com/']});await e.scope.action({command:'snapshot',tabId:3});await assert.rejects(e.scope.action({command:'open-tab',args:['file:///tmp/test']}),/HTTP/);});
 test('opening a new tab requires a connected bridge',async()=>{const e=await environment();await e.disconnect();await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/']}),/Connect/);});

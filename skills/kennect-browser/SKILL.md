@@ -16,6 +16,16 @@ On first use, call `browser_profiles`. If several profiles are connected and `de
 
 The `profile` argument selects the Chrome profile whose extension connection receives the action. It does not select the website account signed in to that profile. Each Chrome profile that loads the extension connects separately; tabs opened by a call belong to the selected profile. The dedicated fallback browser opened by `browser_start` has no profile and is used only when no extension profile is connected.
 
+## Windows and claims
+
+Call `browser_windows` before creating a window. Use `browser_open_window` for a task-owned window; give it a short `name` and a `purpose`, and pass `claim: true` when parallel agents share the profile. A claim blocks window-scoped mutations from other sessions — creating a tab in the window, moving a tab into or out of it, resizing, updating, or closing — but it does not block page reads such as `snapshot`, `evaluate`, or `screenshot`.
+
+Pass an explicit `windowId` for critical operations. `browser_open_tab`, `browser_resize`, `browser_move_tab`, and `browser_tabs` accept one; without it, the tool resolves the connected tab's window. A claim is coordination, not a security boundary: it stops cooperating agents from stepping on each other's viewports, and another local process can ignore it.
+
+Window bounds are outer window dimensions, not the page viewport. After `browser_resize`, verify `innerWidth` / `innerHeight` with `browser_evaluate` before claiming a viewport size. Names, purposes, and claims live in extension session storage; they reset with the browser or an extension reload, and the same reload clears the registry, so existing windows become untracked.
+
+Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` in the current browser session can be closed, and the tool refuses to close the last normal window.
+
 ## Connect and target
 
 - Discover the tools the task is likely to need together, then load additional definitions only as needed. Avoid dumping unrelated tool catalogs. Tab discovery can return private titles and full URL queries/fragments: do not echo or persist the entire inventory. Retain the target tab ID and a sanitized URL.

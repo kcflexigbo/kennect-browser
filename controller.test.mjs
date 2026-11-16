@@ -54,3 +54,10 @@ test('ensure rejects malformed options',()=>{
  const r=run('ensure','not json');
  assert.notEqual(r.status,0);
 });
+test('device emulation commands require the extension',()=>{
+ for(const args of [['emulate-device','{"width":390,"height":844}'],['clear-emulation']]){
+  const r=run(...args);
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/requires the Kennect Browser extension/);
+ }
+});

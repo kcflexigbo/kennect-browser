@@ -73,7 +73,7 @@ async function emulateDevice(options,sessionId,tabId){
    if(previous?.userAgent&&!state.userAgent)await cdp(t.id,'Emulation.setUserAgentOverride',{userAgent:state.originalUserAgent});
    await applyEmulation(t.id,state);
   }catch(error){
-   await clearEmulation(t.id,state).catch(()=>{});
+   await clearEmulation(t.id,{...state,userAgent:previous?.userAgent??state.userAgent}).catch(()=>{});
    delete emulations[t.id];emulationApplied.delete(t.id);await saveEmulations();
    throw Error(`Could not apply device emulation: ${error.message}`);
   }
@@ -142,7 +142,7 @@ function connect(){
 }
 
 chrome.debugger.onDetach.addListener(({tabId})=>{attached.delete(tabId);emulationApplied.delete(tabId);watching.delete(tabId);requests.delete(tabId);consoleTabs.delete(tabId);consoleEntries.delete(tabId);const r=recordings.get(tabId);if(r){r.stopped=true;clearInterval(r.timer);}recordings.delete(tabId)});
-chrome.tabs.onRemoved.addListener(tabId=>{emulationApplied.delete(tabId);if(emulations[tabId])void withEmulationState(async()=>{delete emulations[tabId];await saveEmulations()}).catch(()=>{})});
+chrome.tabs.onRemoved.addListener(tabId=>{emulationApplied.delete(tabId);void withEmulationState(async()=>{if(!emulations[tabId])return;delete emulations[tabId];await saveEmulations()}).catch(()=>{})});
 chrome.debugger.onEvent.addListener(({tabId},method,p)=>{
  if(consoleTabs.has(tabId)){
   let entry;if(method==='Runtime.consoleAPICalled')entry={type:p.type,text:p.args.map(a=>Object.hasOwn(a,'value')?String(a.value):a.description??a.type).join(' '),timestamp:p.timestamp};
@@ -171,7 +171,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
    if(t&&allowed(t.url)){approvedOrigins.add(new URL(t.url).origin);await tab(t.id,true);connectedTab=t.id;}
    await chrome.storage.session.set({connectionError:null});await persistState();return{ok:true,tabId:connectedTab};
   }
-  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();emulations={};emulationApplied.clear();await chrome.storage.session.remove(['approvedOrigins','connectedTab',EMULATION_KEY]);return{ok:true}}
+  if(m.type==='disconnect'){autoConnect=false;await chrome.storage.local.set({autoConnect:false});clearTimeout(retryTimer);retryTimer=undefined;for(const id of [...attached])await chrome.debugger.detach({tabId:id}).catch(()=>{});nativePort?.disconnect();nativePort=null;nativeReady=false;connectedTab=undefined;approvedOrigins.clear();await emulationsReady;emulations={};emulationApplied.clear();await chrome.storage.session.remove(['approvedOrigins','connectedTab',EMULATION_KEY]);return{ok:true}}
   if(m.type==='status')return{ok:true,tabId:connectedTab,connected:!!nativePort&&nativeReady,autoConnect,error:(await chrome.storage.session.get('connectionError')).connectionError};
   throw Error('Unknown popup action');
  })().then(respond,e=>respond({ok:false,error:e.message}));return true;

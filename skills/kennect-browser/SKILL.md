@@ -22,7 +22,7 @@ Call `browser_windows` before creating a window. Use `browser_open_window` for a
 
 Pass an explicit `windowId` for critical operations. `browser_open_tab`, `browser_resize`, `browser_move_tab`, and `browser_tabs` accept one; without it, the tool resolves the connected tab's window. A claim is coordination, not a security boundary: it stops cooperating agents from stepping on each other's viewports, and another local process can ignore it.
 
-Window bounds are outer window dimensions, not the page viewport. After `browser_resize`, verify `innerWidth` / `innerHeight` with `browser_evaluate` before claiming a viewport size. Chrome also enforces a minimum window width; a 390px request can come back with an innerWidth around 500 at 100% scaling. Exact mobile viewports require device emulation, which these tools do not provide. Names, purposes, and claims live in extension session storage; they reset with the browser or an extension reload, and the same reload clears the registry, so existing windows become untracked.
+Window bounds are outer window dimensions, not the page viewport. After `browser_resize`, verify `innerWidth` / `innerHeight` with `browser_evaluate` before claiming a viewport size. Chrome also enforces a minimum window width; a 390px request can come back with an innerWidth around 500 at 100% scaling. Use `browser_emulate_device` for exact viewports; window resizing is clamped by Chrome. Names, purposes, and claims live in extension session storage; they reset with the browser or an extension reload, and the same reload clears the registry, so existing windows become untracked.
 
 Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` in the current browser session can be closed, and the tool refuses to close the last normal window.
 
@@ -32,7 +32,7 @@ Use `browser_emulate_device` for exact per-tab viewports instead of resizing the
 
 After applying, verify `innerWidth`, `innerHeight`, and `devicePixelRatio` with `browser_evaluate`. Screenshots are `viewport × devicePixelRatio`; divide screenshot pixels by the DPR before using them as `browser_mouse` or `browser_zoom` coordinates. Touch enables touch events and mouse-to-touch; the user agent is optional and omitted by default.
 
-Emulation is per tab, so two tabs in one window can hold different viewports. Claims on the tab's window are enforced. After a debugger detach or service-worker restart the stored metrics are reapplied; if reapplication fails, the page action fails until you clear or fix it. Call `browser_clear_device_emulation` when finished to restore the real viewport and original user agent. Emulation is not a real device fingerprint.
+Emulation is per tab, so two tabs in one window can hold different viewports. Claims on the tab's window are enforced. After a debugger detach or service-worker restart the stored metrics are reapplied; if reapplication fails, tab actions fail until you clear or fix it. Call `browser_clear_device_emulation` when finished to restore the real viewport and original user agent. Emulation is not a real device fingerprint.
 
 ## Starting a closed browser
 

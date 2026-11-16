@@ -36,7 +36,7 @@ const tools=[
  tool('browser_recording_export','Export a captured recording to a local animated GIF. Does not publish it.',{tabId}),
  tool('browser_recording_clear','Discard recording frames from memory.',{tabId}),
  tool('browser_mouse','Use coordinates from a fresh screenshot to hover, click, right-click, double-click, triple-click or drag. Verify afterward; obey authorization before consequential actions.',{action:{type:'string',enum:['hover','click','right_click','double_click','triple_click','drag']},x:{type:'number',minimum:0,maximum:20000},y:{type:'number',minimum:0,maximum:20000},endX:{type:'number',minimum:0,maximum:20000},endY:{type:'number',minimum:0,maximum:20000},tabId},['action','x','y']),
- tool('browser_zoom','Capture a rectangular region of the connected page using coordinates from a fresh screenshot.',{x:{type:'number',minimum:0,maximum:20000},y:{type:'number',minimum:0,maximum:20000},width:{type:'number',minimum:1,maximum:4000},height:{type:'number',minimum:1,maximum:4000},tabId},['x','y','width','height'],true),
+ tool('browser_zoom','Capture a rectangular region of the connected page using coordinates from a fresh screenshot. Coordinates are CSS viewport pixels; with device emulation, divide screenshot pixels by the device scale factor first.',{x:{type:'number',minimum:0,maximum:20000},y:{type:'number',minimum:0,maximum:20000},width:{type:'number',minimum:1,maximum:4000},height:{type:'number',minimum:1,maximum:4000},tabId},['x','y','width','height'],true),
  tool('browser_groups','List tab groups containing connected tabs.',{tabId},[],true),
  tool('browser_group_tabs','Group connected tabs and set a name and color.',{tabIds,title:{type:'string',maxLength:100},color:{type:'string',enum:colors},tabId},['tabIds']),
  tool('browser_update_group','Rename, recolor, collapse or expand a group. Every tab in it must be connected.',{groupId:{type:'integer',minimum:0},title:{type:'string',maxLength:100},color:{type:'string',enum:colors},collapsed:{type:'boolean'},tabId},['groupId']),
@@ -65,7 +65,7 @@ const tools=[
  tool('browser_type','Type into the currently focused field. Requires clear user authorization for any data transmission.',{text,tabId},['text']),
  tool('browser_key','Press a key or shortcut such as Enter, ArrowDown, Ctrl+a, or Meta+a (Mac). Enter may submit a message or form; obtain authorization before consequential submission.',{key:{type:'string',minLength:1,maxLength:50},tabId},['key']),
  tool('browser_scroll','Scroll the website page up or down, then take a fresh snapshot.',{pixels:{type:'number',minimum:-2000,maximum:2000},tabId},['pixels']),
- tool('browser_screenshot','Capture the current website page. May contain private messages; do not share outside the current task.',{tabId},[],true)
+ tool('browser_screenshot','Capture the current website page. May contain private messages; do not share outside the current task. With device emulation, images are viewport × deviceScaleFactor; divide screenshot pixels by the DPR before using mouse or zoom coordinates.',{tabId},[],true)
 ];
 function invalid(message){const e=new Error(message);e.rpc=-32602;throw e}
 function validate(schema,args){

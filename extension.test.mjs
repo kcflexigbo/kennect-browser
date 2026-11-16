@@ -264,3 +264,40 @@ test('an owner mutation renews the lease',async()=>{
  await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:500,height:800})],sessionId:'agent-a'});
  assert.ok(e.sessionSaved.windowRegistry[opened.windowId].leaseUntil>before+10000);
 });
+test('open-tab targets an explicit window and resolves the connected tab window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/window',name:'target'})],sessionId:'agent-a'}));
+ const explicit=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/explicit','','',String(opened.windowId)],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(explicit.targetId)).windowId,opened.windowId);
+ e.scope.chrome.tabs.update=async()=>{};
+ await e.scope.action({command:'select-tab',tabId:2,sessionId:'agent-a'});
+ const implicit=JSON.parse(await e.scope.action({command:'open-tab',args:['https://example.com/implicit','',''],sessionId:'agent-a'}));
+ assert.equal(e.pages.get(Number(implicit.targetId)).windowId,1);
+});
+test('resize by windowId changes only that window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'resize',args:['500','800',String(opened.windowId)],sessionId:'agent-a'});
+ assert.equal(e.windows.get(opened.windowId).width,500);
+ assert.equal(e.windows.get(1).width,1200);
+});
+test('move-tab moves to a destination window and tabs filter by window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'move-tab',args:['0',String(opened.windowId)],sessionId:'agent-a',tabId:2});
+ assert.equal(e.pages.get(2).windowId,opened.windowId);
+ const filtered=JSON.parse(await e.scope.action({command:'tabs',args:[String(opened.windowId)],sessionId:'agent-a'}));
+ assert.ok(filtered.every(t=>t.windowId===opened.windowId));
+});
+test('implicit window targets are blocked by another session claim',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'locked',claim:true})],sessionId:'agent-a'}));
+ e.scope.chrome.tabs.update=async()=>{};
+ await e.scope.action({command:'select-tab',tabId:Number(opened.tabId),sessionId:'agent-b'});
+ await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-b'}),/claimed by another agent/i);
+ await assert.rejects(e.scope.action({command:'resize',args:['500','800'],sessionId:'agent-b'}),/claimed by another agent/i);
+});

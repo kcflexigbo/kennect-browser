@@ -26,6 +26,14 @@ Window bounds are outer window dimensions, not the page viewport. After `browser
 
 Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` in the current browser session can be closed, and the tool refuses to close the last normal window.
 
+## Device emulation
+
+Use `browser_emulate_device` for exact per-tab viewports instead of resizing the window. It applies CDP device metrics to the connected tab: width, height, device pixel ratio, mobile, touch, and optional user agent or orientation. The real window is not resized.
+
+After applying, verify `innerWidth`, `innerHeight`, and `devicePixelRatio` with `browser_evaluate`. Screenshots are `viewport × devicePixelRatio`; divide screenshot pixels by the DPR before using them as `browser_mouse` or `browser_zoom` coordinates. Touch enables touch events and mouse-to-touch; the user agent is optional and omitted by default.
+
+Emulation is per tab, so two tabs in one window can hold different viewports. Claims on the tab's window are enforced. After a debugger detach or service-worker restart the stored metrics are reapplied; if reapplication fails, the page action fails until you clear or fix it. Call `browser_clear_device_emulation` when finished to restore the real viewport and original user agent. Emulation is not a real device fingerprint.
+
 ## Starting a closed browser
 
 When no extension profile is connected and the user authorizes opening their browser, call `browser_ensure`. It reuses any responsive profile; otherwise it launches the last-used Chrome profile that has the Kennect extension, opens `about:blank`, and waits up to the requested timeout. `launched: false` means a profile was already connected. It opens a visible personal browser window, so obtain explicit authorization first and never use it to bypass a paused extension without the user.

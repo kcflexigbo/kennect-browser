@@ -17,6 +17,11 @@ test('MCP discovers browser tools and rejects invalid calls',async()=>{
  try{
   const init=await call('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'test',version:'1'}});assert.equal(init.result?.serverInfo?.name,'kennect-browser');
   const list=await call('tools/list');assert.ok(list.result.tools.some(t=>t.name==='browser_snapshot'));assert.ok(list.result.tools.some(t=>t.name==='browser_click'));
+  const zoomTool=list.result.tools.find(t=>t.name==='browser_zoom');
+  assert.match(zoomTool.description,/cropped screenshot/i);
+  assert.match(zoomTool.description,/not a zoom/i);
+  assert.match(zoomTool.description,/does not change/i);
+  assert.match(zoomTool.description,/full-page screenshot/i);
   const names=list.result.tools.map(t=>t.name);assert.ok(names.includes('browser_profiles'));assert.ok(names.includes('browser_set_default_profile'));assert.ok(names.includes('browser_download'));assert.ok(names.includes('browser_download_status'));
   const missingDownload=await call('tools/call',{name:'browser_download',arguments:{}});assert.equal(missingDownload.error.code,-32602);
   const badDownloadId=await call('tools/call',{name:'browser_download_status',arguments:{downloadId:'x'}});assert.equal(badDownloadId.error.code,-32602);

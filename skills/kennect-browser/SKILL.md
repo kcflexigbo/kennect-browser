@@ -73,7 +73,7 @@ Finish meaningful action sequences with the observation needed to establish thei
 
 At Windows display scale 150%, a 1707-by-876 CSS viewport produced a 2561-by-1314 PNG. Mouse and crop inputs used CSS coordinates, despite their screenshot-coordinate descriptions.
 
-Before coordinate actions, use a fresh screenshot and determine its raw dimensions and the current viewport dimensions. Convert image positions into CSS viewport coordinates; account for any renderer scaling separately. Screenshot-only capture and semantic node clicks do not need this conversion. Prefer a node click whenever possible. For zoom/crop, establish whether coordinates refer to the document or viewport after scrolling before relying on the result.
+Before coordinate actions, use a fresh screenshot and determine its raw dimensions and the current viewport dimensions. Convert image positions into CSS viewport coordinates; account for any renderer scaling separately. Screenshot-only capture and semantic node clicks do not need this conversion. Prefer a node click whenever possible. `browser_zoom` returns one cropped region of the current render; it does not change page, browser, or canvas zoom, and it cannot recover detail that is not rendered at the current zoom (raise the page's or canvas's zoom first). Establish whether coordinates refer to the document or viewport after scrolling before relying on the result.
 
 Screenshot and recording startup each timed out once on a background tab, then worked after explicit selection. This is an observed workaround, not a proven cause. Serialize foreground operations across agents. After a timeout, inspect state before retrying a mutation. Recording may have partially started: stop and inspect it before starting another.
 

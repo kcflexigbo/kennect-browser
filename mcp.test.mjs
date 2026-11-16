@@ -40,6 +40,17 @@ test('MCP discovers browser tools and rejects invalid calls',async()=>{
   assert.equal(claimWithoutName.error.code,-32602);
   const unknownWindowArg=await call('tools/call',{name:'browser_open_window',arguments:{url:'https://example.com/',bogus:1}});
   assert.equal(unknownWindowArg.error.code,-32602);
+  assert.ok(names.includes('browser_ensure'));
+  const ensureTool=list.result.tools.find(t=>t.name==='browser_ensure');
+  assert.equal(ensureTool.inputSchema.properties.profile,undefined);
+  assert.equal(ensureTool.annotations.readOnlyHint,false);
+  assert.deepEqual(ensureTool.inputSchema.properties.timeoutMs,{type:'integer',minimum:5000,maximum:60000});
+  const badEnsureTimeout=await call('tools/call',{name:'browser_ensure',arguments:{timeoutMs:1000}});
+  assert.equal(badEnsureTimeout.error.code,-32602);
+  const emptyProfileDir=await call('tools/call',{name:'browser_ensure',arguments:{profileDirectory:''}});
+  assert.equal(emptyProfileDir.error.code,-32602);
+  const unknownEnsureArg=await call('tools/call',{name:'browser_ensure',arguments:{bogus:1}});
+  assert.equal(unknownEnsureArg.error.code,-32602);
   const profiles=await call('tools/call',{name:'browser_profiles',arguments:{}});assert.equal(profiles.result.isError,false);assert.deepEqual(JSON.parse(profiles.result.content[0].text),{default:null,profiles:[]});
   const unknownProfile=await call('tools/call',{name:'browser_set_default_profile',arguments:{profile:'chrome:Default:aaaaaa'}});assert.equal(unknownProfile.result.isError,true);assert.match(unknownProfile.result.content[0].text,/Unknown browser profile/);
   const missingProfile=await call('tools/call',{name:'browser_set_default_profile',arguments:{}});assert.equal(missingProfile.error.code,-32602);

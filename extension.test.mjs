@@ -302,6 +302,85 @@ test('implicit window targets are blocked by another session claim',async()=>{
  await assert.rejects(e.scope.action({command:'open-tab',args:['https://example.com/b','',''],sessionId:'agent-b'}),/claimed by another agent/i);
  await assert.rejects(e.scope.action({command:'resize',args:['500','800'],sessionId:'agent-b'}),/claimed by another agent/i);
 });
+test('device emulation applies exact CDP metrics',async()=>{
+ const recorded=(calls,method)=>JSON.parse(JSON.stringify(calls.find(item=>item.method===method)?.params??null));
+ const e=await environment();await e.connect();
+ const calls=[];
+ e.scope.chrome.debugger.sendCommand=async(target,method,params)=>{calls.push({target,method,params});return{}};
+ const result=JSON.parse(await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844,deviceScaleFactor:3,mobile:true,touch:true,userAgent:'MobileUA',orientation:'portraitPrimary'})],tabId:1,sessionId:'agent-a'}));
+ assert.equal(result.applied,true);assert.equal(result.width,390);assert.equal(result.height,844);
+ assert.deepEqual(recorded(calls,'Emulation.setDeviceMetricsOverride'),{width:390,height:844,deviceScaleFactor:3,mobile:true,screenOrientation:{type:'portraitPrimary',angle:0}});
+ assert.deepEqual(recorded(calls,'Emulation.setTouchEmulationEnabled'),{enabled:true,maxTouchPoints:5});
+ assert.deepEqual(recorded(calls,'Emulation.setEmitTouchEventsForMouse'),{enabled:true,configuration:'mobile'});
+ assert.deepEqual(recorded(calls,'Emulation.setUserAgentOverride'),{userAgent:'MobileUA'});
+});
+test('device emulation defaults to desktop without touch',async()=>{
+ const recorded=(calls,method)=>JSON.parse(JSON.stringify(calls.find(item=>item.method===method)?.params??null));
+ const e=await environment();await e.connect();
+ const calls=[];
+ e.scope.chrome.debugger.sendCommand=async(target,method,params)=>{calls.push({target,method,params});return{}};
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:1440,height:1000})],tabId:1,sessionId:'agent-a'});
+ assert.deepEqual(recorded(calls,'Emulation.setDeviceMetricsOverride'),{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ assert.deepEqual(recorded(calls,'Emulation.setTouchEmulationEnabled'),{enabled:false});
+ assert.deepEqual(recorded(calls,'Emulation.setEmitTouchEventsForMouse'),{enabled:false});
+});
+test('device emulation clears and restores the original UA',async()=>{
+ const recorded=(calls,method)=>JSON.parse(JSON.stringify(calls.find(item=>item.method===method)?.params??null));
+ const e=await environment();await e.connect();
+ const calls=[];
+ e.scope.chrome.debugger.sendCommand=async(target,method,params)=>{calls.push({target,method,params});return{}};
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844,userAgent:'MobileUA'})],tabId:1,sessionId:'agent-a'});
+ calls.length=0;
+ const result=JSON.parse(await e.scope.action({command:'clear-emulation',args:[],tabId:1,sessionId:'agent-a'}));
+ assert.equal(result.cleared,true);
+ assert.ok(calls.some(c=>c.method==='Emulation.clearDeviceMetricsOverride'));
+ assert.deepEqual(recorded(calls,'Emulation.setUserAgentOverride'),{userAgent:'test-agent'});
+ assert.equal(e.sessionSaved.emulations[1],undefined);
+});
+test('re-emulation without a userAgent removes the override',async()=>{
+ const e=await environment();await e.connect();
+ const calls=[];
+ e.scope.chrome.debugger.sendCommand=async(target,method,params)=>{calls.push({target,method,params});return{}};
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844,userAgent:'MobileUA'})],tabId:1,sessionId:'agent-a'});
+ calls.length=0;
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:1440,height:1000})],tabId:1,sessionId:'agent-a'});
+ assert.deepEqual(JSON.parse(JSON.stringify(calls[0].params)),{userAgent:'test-agent'});
+ assert.equal(calls.some(c=>c.method==='Emulation.setUserAgentOverride'&&c.params.userAgent==='MobileUA'),false);
+ assert.equal(e.sessionSaved.emulations[1].userAgent,null);
+});
+test('device emulation rejects invalid metrics before CDP',async()=>{
+ const e=await environment();await e.connect();
+ const calls=[];e.scope.chrome.debugger.sendCommand=async(target,method,params)=>{calls.push({target,method,params});return{}};
+ for(const options of [{},{width:99,height:844},{width:390,height:844,deviceScaleFactor:5},{width:390,height:844,orientation:'sideways'},{width:390,height:844,userAgent:'bad\u0001ua'}]){
+  await assert.rejects(e.scope.action({command:'emulate-device',args:[JSON.stringify(options)],tabId:1,sessionId:'agent-a'}),/Invalid/);
+ }
+ assert.equal(calls.length,0);
+});
+test('a window claim blocks emulation from another session',async()=>{
+ const e=await environment();await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'locked',claim:true})],sessionId:'agent-a'}));
+ const tabId=Number(opened.tabId);
+ await assert.rejects(e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844})],tabId,sessionId:'agent-b'}),/claimed by another agent/i);
+ await assert.rejects(e.scope.action({command:'clear-emulation',args:[],tabId,sessionId:'agent-b'}),/claimed by another agent/i);
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844})],tabId,sessionId:'agent-a'});
+ await e.scope.action({command:'clear-emulation',args:[],tabId,sessionId:'agent-a'});
+});
+test('tab listing reports requested and active emulation',async()=>{
+ const e=await environment();await e.connect();
+ await e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844,deviceScaleFactor:3,mobile:true,touch:true,orientation:'portraitPrimary'})],tabId:1,sessionId:'agent-a'});
+ const tabs=JSON.parse(await e.scope.action({command:'tabs'}));
+ const tab=tabs.find(t=>t.tabId==='1');
+ assert.deepEqual(tab.emulation,{width:390,height:844,deviceScaleFactor:3,mobile:true,touch:true,userAgent:null,orientation:'portraitPrimary'});
+ assert.equal(tab.emulationActive,true);
+ const other=tabs.find(t=>t.tabId==='2');
+ assert.equal(other.emulation,null);assert.equal(other.emulationActive,false);
+});
+test('a CDP apply failure leaves no emulation state',async()=>{
+ const e=await environment();await e.connect();
+ e.scope.chrome.debugger.sendCommand=async(target,method)=>{if(method==='Emulation.setDeviceMetricsOverride')throw Error('CDP failed');return{}};
+ await assert.rejects(e.scope.action({command:'emulate-device',args:[JSON.stringify({width:390,height:844})],tabId:1,sessionId:'agent-a'}),/Could not apply device emulation/i);
+ assert.equal(e.sessionSaved.emulations[1],undefined);
+});
 test('a delayed registry load cannot bypass a claim',async()=>{
  const e=await environment({delayRegistryGet:true});
  e.sessionSaved.windowRegistry={1:{windowId:1,name:'locked',purpose:null,ownerSession:'agent-a',claimedAt:Date.now(),leaseUntil:Date.now()+60000,leaseMs:60000,createdByTool:true,createdAt:Date.now()}};

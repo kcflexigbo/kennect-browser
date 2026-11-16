@@ -14,6 +14,86 @@ function windowSummary(win,entry,sessionId,tabs){
  const claim=activeClaim(entry);
  return{windowId:win.id,name:entry?.name??null,purpose:entry?.purpose??null,createdByTool:entry?.createdByTool??false,owner:claim?ownerLabel(claim.ownerSession):null,claimedByYou:!!claim&&claim.ownerSession===sessionId,claimedByOther:!!claim&&claim.ownerSession!==sessionId,leaseUntil:claim?new Date(claim.leaseUntil).toISOString():null,focused:!!win.focused,state:win.state??'normal',bounds:{left:win.left??0,top:win.top??0,width:win.width??0,height:win.height??0},tabCount:tabs.length,connectedTabCount:tabs.filter(t=>approved(t.url)&&attached.has(t.id)).length};
 }
+const EMULATION_KEY='emulations';
+let emulations={};
+const emulationApplied=new Set();
+const emulationsReady=chrome.storage.session.get(EMULATION_KEY).then(saved=>{emulations=Object.assign({},saved?.[EMULATION_KEY]??{})}).catch(()=>{});
+let emulationQueue=Promise.resolve();
+function withEmulationState(fn){const run=emulationQueue.then(async()=>{await emulationsReady;return fn()});emulationQueue=run.catch(()=>{});return run}
+async function saveEmulations(){await chrome.storage.session.set({[EMULATION_KEY]:emulations})}
+const originalUserAgent=globalThis.navigator?.userAgent??'';
+const orientationAngles={portraitPrimary:0,landscapePrimary:90,portraitSecondary:180,landscapeSecondary:270};
+function validateEmulation(options){
+ if(!Number.isInteger(options.width)||options.width<100||options.width>4000)throw Error('Invalid emulation width.');
+ if(!Number.isInteger(options.height)||options.height<100||options.height>4000)throw Error('Invalid emulation height.');
+ const deviceScaleFactor=options.deviceScaleFactor??1;
+ if(typeof deviceScaleFactor!=='number'||!Number.isFinite(deviceScaleFactor)||deviceScaleFactor<1||deviceScaleFactor>4)throw Error('Invalid device scale factor.');
+ if(options.mobile!==undefined&&typeof options.mobile!=='boolean')throw Error('Invalid mobile flag.');
+ if(options.touch!==undefined&&typeof options.touch!=='boolean')throw Error('Invalid touch flag.');
+ let userAgent=null;
+ if(options.userAgent!==undefined){
+  if(typeof options.userAgent!=='string')throw Error('Invalid user agent.');
+  userAgent=options.userAgent.trim();
+  if(!userAgent||userAgent.length>500||/[\u0000-\u001f\u007f]/.test(userAgent))throw Error('Invalid user agent.');
+ }
+ const orientation=options.orientation??null;
+ if(orientation!==null&&!Object.hasOwn(orientationAngles,orientation))throw Error('Invalid orientation.');
+ return{width:options.width,height:options.height,deviceScaleFactor,mobile:options.mobile===true,touch:options.touch===true,userAgent,orientation};
+}
+function publicEmulation(state){return{width:state.width,height:state.height,deviceScaleFactor:state.deviceScaleFactor,mobile:state.mobile,touch:state.touch,userAgent:state.userAgent??null,orientation:state.orientation??null}}
+async function applyEmulation(id,state){
+ await cdp(id,'Emulation.setDeviceMetricsOverride',{width:state.width,height:state.height,deviceScaleFactor:state.deviceScaleFactor,mobile:state.mobile,...(state.orientation?{screenOrientation:{type:state.orientation,angle:orientationAngles[state.orientation]}}:{})});
+ await cdp(id,'Emulation.setTouchEmulationEnabled',{enabled:state.touch,...(state.touch?{maxTouchPoints:5}:{})});
+ await cdp(id,'Emulation.setEmitTouchEventsForMouse',{enabled:state.touch,...(state.touch?{configuration:'mobile'}:{})});
+ if(state.userAgent)await cdp(id,'Emulation.setUserAgentOverride',{userAgent:state.userAgent});
+}
+async function clearEmulation(id,state){
+ await cdp(id,'Emulation.clearDeviceMetricsOverride');
+ await cdp(id,'Emulation.setTouchEmulationEnabled',{enabled:false});
+ await cdp(id,'Emulation.setEmitTouchEventsForMouse',{enabled:false});
+ if(state?.userAgent&&state?.originalUserAgent)await cdp(id,'Emulation.setUserAgentOverride',{userAgent:state.originalUserAgent});
+}
+async function tabForEmulation(id){
+ const targetId=id??connectedTab;if(!Number.isInteger(targetId))throw Error('Select a website tab first.');
+ const t=await chrome.tabs.get(targetId);if(!t)throw Error('Tab not found. Take a fresh tabs list.');
+ if(!t.url&&t.pendingUrl)t.url=t.pendingUrl;
+ if(!allowed(t.url))throw Error('Browser internal pages and local files cannot be controlled.');
+ if(!approved(t.url))throw Error('Open this website and click Connect in the Kennect Browser extension first.');
+ await ensureAttached(t);
+ return t;
+}
+async function emulateDevice(options,sessionId,tabId){
+ const next=validateEmulation(options);
+ return withEmulationState(async()=>{
+  const t=await tabForEmulation(tabId?Number(tabId):undefined);
+  assertWindowAccess(t.windowId,sessionId);
+  const previous=emulations[t.id]??null;
+  const state={...next,originalUserAgent:previous?.originalUserAgent??originalUserAgent};
+  try{
+   if(previous?.userAgent&&!state.userAgent)await cdp(t.id,'Emulation.setUserAgentOverride',{userAgent:state.originalUserAgent});
+   await applyEmulation(t.id,state);
+  }catch(error){
+   await clearEmulation(t.id,state).catch(()=>{});
+   delete emulations[t.id];emulationApplied.delete(t.id);await saveEmulations();
+   throw Error(`Could not apply device emulation: ${error.message}`);
+  }
+  emulations[t.id]=state;emulationApplied.add(t.id);await saveEmulations();
+  return JSON.stringify({tabId:String(t.id),...publicEmulation(state),applied:true});
+ });
+}
+async function clearDeviceEmulation(sessionId,tabId){
+ return withEmulationState(async()=>{
+  const t=await tabForEmulation(tabId?Number(tabId):undefined);
+  assertWindowAccess(t.windowId,sessionId);
+  const state=emulations[t.id]??{originalUserAgent};
+  try{await clearEmulation(t.id,state)}catch(error){
+   delete emulations[t.id];emulationApplied.delete(t.id);await saveEmulations();
+   throw Error(`Could not clear device emulation: ${error.message}`);
+  }
+  delete emulations[t.id];emulationApplied.delete(t.id);await saveEmulations();
+  return JSON.stringify({tabId:String(t.id),cleared:true});
+ });
+}
 async function identity(){if(instanceId)return instanceId;const saved=await chrome.storage.local.get('instanceId');instanceId=typeof saved.instanceId==='string'&&saved.instanceId?saved.instanceId:crypto.randomUUID();if(saved.instanceId!==instanceId)await chrome.storage.local.set({instanceId});return instanceId}
 async function accountEmail(){try{const info=await chrome.identity?.getProfileUserInfo?.({accountStatus:'ANY'});return typeof info?.email==='string'&&info.email?info.email.slice(0,40):''}catch{return ''}}
 async function announce(){const id=await identity();const saved=await chrome.storage.local.get('profileLabel');const manual=typeof saved.profileLabel==='string'?saved.profileLabel.trim().slice(0,40):'';const label=manual||await accountEmail();nativePort?.postMessage({type:'hello',instanceId:id,label,extensionVersion:chrome.runtime.getManifest().version,userAgent:globalThis.navigator?.userAgent??''})}
@@ -208,7 +288,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
  sessionId=sessionId||'local';
- await Promise.all([stateReady,windowsReady]);
+ await Promise.all([stateReady,windowsReady,emulationsReady]);
  if(command==='download-status'){
   await downloadsReady;
   const downloadId=Number(args[0]);if(!Number.isInteger(downloadId)||!trackedDownloads.has(downloadId))throw Error('Unknown download ID for this session.');
@@ -234,6 +314,8 @@ async function action({command,args=[],tabId,sessionId='local'}){
  });
  if(command==='close-window')return closeWindow(Number(args[0]),sessionId,args[1]==='1');
  if(command==='update-window')return updateWindow(Number(args[0]),JSON.parse(args[1]||'{}'),sessionId);
+ if(command==='emulate-device')return emulateDevice(JSON.parse(args[0]||'{}'),sessionId,tabId);
+ if(command==='clear-emulation')return clearDeviceEmulation(sessionId,tabId);
  if(command==='open-window')return openWindow(JSON.parse(args[0]||'{}'),sessionId);
  if(command==='windows'){
   return withWindowRegistry(async()=>{
@@ -247,7 +329,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
    return JSON.stringify({windows:list});
   });
  }
- if(command==='tabs'){const filter=args[0]!==undefined&&args[0]!==''?Number(args[0]):null;if(filter!==null&&(!Number.isInteger(filter)||filter<0))throw Error('Invalid window ID.');const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)&&(filter===null||t.windowId===filter)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null})))}
+ if(command==='tabs'){const filter=args[0]!==undefined&&args[0]!==''?Number(args[0]):null;if(filter!==null&&(!Number.isInteger(filter)||filter<0))throw Error('Invalid window ID.');const all=await chrome.tabs.query({}),groups=await chrome.tabGroups.query({}),titles=new Map(groups.map(g=>[g.id,g.title]));return JSON.stringify(all.filter(t=>allowed(t.url)&&(filter===null||t.windowId===filter)).map(t=>({tabId:String(t.id),title:t.title,url:t.url,windowId:t.windowId,active:!!t.active,connected:approved(t.url),groupId:t.groupId??-1,groupTitle:t.groupId>=0?titles.get(t.groupId)??null:null,emulation:emulations[t.id]?publicEmulation(emulations[t.id]):null,emulationActive:emulationApplied.has(t.id)})))}
  if(command==='select-tab'){
   const target=await tab(tabId?Number(tabId):connectedTab,true);
   approvedOrigins.add(new URL(target.url).origin);connectedTab=target.id;

@@ -134,6 +134,37 @@ async function openWindow(options,sessionId){
   return JSON.stringify({windowId:win.id,tabId:String(created.id),name,reused:false,owner:current?ownerLabel(current.ownerSession):null,claimedByYou:!!current&&current.ownerSession===sessionId,leaseUntil:current?new Date(current.leaseUntil).toISOString():null});
  });
 }
+async function updateWindow(windowId,changes,sessionId){
+ if(!Number.isInteger(windowId)||windowId<0)throw Error('Invalid window ID.');
+ const keys=['width','height','left','top','focused','state','name','purpose'];
+ if(!keys.some(key=>changes[key]!==undefined))throw Error('Provide at least one window change.');
+ validateWindowBounds(changes);
+ const states=['normal','minimized','maximized','fullscreen'];
+ if(changes.state!==undefined&&!states.includes(changes.state))throw Error('Invalid window state.');
+ return withWindowRegistry(async()=>{
+  const all=await chrome.windows.getAll({populate:true,windowTypes:['normal']});
+  const live=new Set(all.map(w=>w.id));
+  pruneWindowRegistry(live);
+  const entry=windowRegistry[windowId];
+  if(!live.has(windowId)||!entry)throw Error('Unknown window ID. Refresh with browser_windows.');
+  const name=changes.name===undefined?undefined:validateWindowName(changes.name);
+  if(name){
+   const conflict=all.find(w=>w.id!==windowId&&String(windowRegistry[w.id]?.name??'').trim().toLowerCase()===name.toLowerCase());
+   if(conflict)throw Error(`Window name "${name}" is already used by window ${conflict.id}.`);
+  }
+  if(changes.purpose!==undefined)entry.purpose=changes.purpose?validateWindowPurpose(changes.purpose):null;
+  if(name!==undefined)entry.name=name;
+  const update={};
+  for(const key of ['width','height','left','top','focused','state'])if(changes[key]!==undefined)update[key]=changes[key];
+  if(changes.width!==undefined)update.state='normal';
+  if(Object.keys(update).length)await chrome.windows.update(windowId,update);
+  if(changes.state!==undefined&&changes.width!==undefined&&changes.state!=='normal')await chrome.windows.update(windowId,{state:changes.state});
+  await saveWindowRegistry();
+  const win=await chrome.windows.get(windowId);
+  const tabs=await chrome.tabs.query({windowId});
+  return JSON.stringify(windowSummary(win,entry,sessionId,tabs));
+ });
+}
 async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
@@ -154,6 +185,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
  }
+ if(command==='update-window')return updateWindow(Number(args[0]),JSON.parse(args[1]||'{}'),sessionId);
  if(command==='open-window')return openWindow(JSON.parse(args[0]||'{}'),sessionId);
  if(command==='windows'){
   return withWindowRegistry(async()=>{

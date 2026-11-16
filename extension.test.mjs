@@ -186,3 +186,22 @@ test('concurrent window creation keeps both registry entries',async()=>{
  const names=Object.values(e.sessionSaved.windowRegistry).map(x=>x.name).sort();
  assert.deepEqual(names,['one','two']);
 });
+test('updating a window resizes and renames only the target',async()=>{
+ const e=await environment();
+ await e.connect();
+ const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'desktop'})],sessionId:'agent-a'}));
+ const other=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:'other'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'update-window',args:[String(opened.windowId),JSON.stringify({width:800,height:600,name:'desktop-main'})],sessionId:'agent-a'});
+ assert.equal(e.windows.get(opened.windowId).width,800);
+ assert.equal(e.windows.get(other.windowId).width,1200);
+ assert.equal(e.sessionSaved.windowRegistry[opened.windowId].name,'desktop-main');
+});
+test('window updates reject duplicates, empty changes, and unknown windows',async()=>{
+ const e=await environment();
+ await e.connect();
+ const a=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'a'})],sessionId:'agent-a'}));
+ await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:'b'})],sessionId:'agent-a'});
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(a.windowId),JSON.stringify({name:'b'})],sessionId:'agent-a'}),/already/i);
+ await assert.rejects(e.scope.action({command:'update-window',args:[String(a.windowId),'{}'],sessionId:'agent-a'}),/change/i);
+ await assert.rejects(e.scope.action({command:'update-window',args:['999',JSON.stringify({width:800,height:600})],sessionId:'agent-a'}),/Unknown window/i);
+});

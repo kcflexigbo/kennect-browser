@@ -151,3 +151,38 @@ test('window listing reports names, bounds, and claims',async()=>{
  assert.equal(w.tabCount,2);
  assert.equal(w.connectedTabCount,0);
 });
+test('opening a window creates it with bounds, a name, and a claim',async()=>{
+ const e=await environment();
+ await e.connect();
+ const result=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/mobile',width:390,height:844,name:'mobile-390',purpose:'mobile viewport',claim:true})],sessionId:'agent-a'}));
+ assert.equal(result.reused,false);
+ assert.equal(result.name,'mobile-390');
+ const win=e.windows.get(result.windowId);
+ assert.equal(win.width,390);
+ assert.equal(win.height,844);
+ assert.equal(win.focused,false);
+ assert.equal(e.pages.get(Number(result.tabId)).windowId,result.windowId);
+ const entry=e.sessionSaved.windowRegistry[result.windowId];
+ assert.equal(entry.name,'mobile-390');
+ assert.equal(entry.ownerSession,'agent-a');
+});
+test('window creation refuses duplicate and conflicting names',async()=>{
+ const e=await environment();
+ await e.connect();
+ const first=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a',name:'Mobile-390',claim:true})],sessionId:'agent-a'}));
+ await assert.rejects(e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/b',name:' mobile-390 '})],sessionId:'agent-a'}),/already/i);
+ const reused=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/c',name:'mobile-390',reuseExisting:true})],sessionId:'agent-a'}));
+ assert.equal(reused.reused,true);
+ assert.equal(reused.windowId,first.windowId);
+ await assert.rejects(e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/d',name:'mobile-390',reuseExisting:true})],sessionId:'agent-b'}),/claimed/i);
+});
+test('concurrent window creation keeps both registry entries',async()=>{
+ const e=await environment();
+ await e.connect();
+ await Promise.all([
+  e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/1',name:'one'})],sessionId:'agent-a'}),
+  e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/2',name:'two'})],sessionId:'agent-b'})
+ ]);
+ const names=Object.values(e.sessionSaved.windowRegistry).map(x=>x.name).sort();
+ assert.deepEqual(names,['one','two']);
+});

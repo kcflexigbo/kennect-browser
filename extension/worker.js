@@ -91,6 +91,49 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
 chrome.runtime.onStartup.addListener(startBridge);
 chrome.runtime.onInstalled.addListener(startBridge);
 void startBridge();
+function validateWindowName(value){const name=String(value??'').trim();if(!name||name.length>40||/[\u0000-\u001f\u007f]/.test(name))throw Error('Window name must be 1-40 characters without control characters.');return name}
+function validateWindowPurpose(value){const purpose=String(value??'').trim();if(purpose.length>200)throw Error('Window purpose must be 200 characters or fewer.');return purpose}
+function validateWindowBounds(options){const hasWidth=options.width!==undefined,hasHeight=options.height!==undefined;if(hasWidth!==hasHeight)throw Error('Pass width and height together.');if(hasWidth&&(!Number.isInteger(options.width)||options.width<320||options.width>4000))throw Error('Invalid window width.');if(hasHeight&&(!Number.isInteger(options.height)||options.height<240||options.height>4000))throw Error('Invalid window height.');for(const key of ['left','top'])if(options[key]!==undefined&&(!Number.isInteger(options[key])||options[key]<-20000||options[key]>20000))throw Error(`Invalid window ${key}.`)}
+async function openWindow(options,sessionId){
+ if(!allowed(options.url))throw Error('Only HTTP and HTTPS websites can be opened.');
+ const url=new URL(options.url).href;
+ validateWindowBounds(options);
+ const name=options.name===undefined?null:validateWindowName(options.name);
+ const purpose=options.purpose===undefined?null:validateWindowPurpose(options.purpose);
+ if(options.claim===true&&!name)throw Error('A window claim requires a name.');
+ const leaseMs=options.leaseMs??1800000;
+ if(!Number.isInteger(leaseMs)||leaseMs<60000||leaseMs>86400000)throw Error('Invalid lease duration.');
+ return withWindowRegistry(async()=>{
+  const all=await chrome.windows.getAll({populate:true,windowTypes:['normal']});
+  pruneWindowRegistry(new Set(all.map(w=>w.id)));
+  if(name){
+   const existing=all.find(w=>String(windowRegistry[w.id]?.name??'').trim().toLowerCase()===name.toLowerCase());
+   if(existing){
+    if(!options.reuseExisting)throw Error(`Window name "${name}" is already used by window ${existing.id}.`);
+    const entry=windowRegistry[existing.id];
+    const claim=activeClaim(entry);
+    if(claim&&claim.ownerSession!==sessionId)throw Error(`Window ${existing.id} "${entry.name}" is claimed by another agent.`);
+    if(options.claim===true){entry.ownerSession=sessionId;entry.claimedAt=Date.now();entry.leaseMs=leaseMs;entry.leaseUntil=Date.now()+leaseMs;}
+    await saveWindowRegistry();
+    const current=activeClaim(entry);
+    return JSON.stringify({windowId:existing.id,tabId:null,name:entry.name,reused:true,owner:current?ownerLabel(current.ownerSession):null,claimedByYou:!!current&&current.ownerSession===sessionId,leaseUntil:current?new Date(current.leaseUntil).toISOString():null});
+   }
+  }
+  const win=await chrome.windows.create({url,type:'normal',focused:options.focused??false,...(options.width!==undefined?{width:options.width,height:options.height}:{}),...(options.left!==undefined?{left:options.left}:{}),...(options.top!==undefined?{top:options.top}:{})});
+  const created=win.tabs?.[0]??(await chrome.tabs.query({windowId:win.id}))[0];
+  if(!created)throw Error('Chrome did not create a tab in the new window.');
+  approvedOrigins.add(new URL(url).origin);
+  await tab(created.id,true);
+  connectedTab=created.id;
+  await persistState();
+  const entry={windowId:win.id,name,purpose,ownerSession:null,claimedAt:null,leaseUntil:null,leaseMs,createdByTool:true,createdAt:Date.now()};
+  if(options.claim===true){entry.ownerSession=sessionId;entry.claimedAt=Date.now();entry.leaseUntil=Date.now()+leaseMs;}
+  windowRegistry[win.id]=entry;
+  await saveWindowRegistry();
+  const current=activeClaim(entry);
+  return JSON.stringify({windowId:win.id,tabId:String(created.id),name,reused:false,owner:current?ownerLabel(current.ownerSession):null,claimedByYou:!!current&&current.ownerSession===sessionId,leaseUntil:current?new Date(current.leaseUntil).toISOString():null});
+ });
+}
 async function action({command,args=[],tabId,sessionId='local'}){
  if(!nativeReady)throw Error('Click Connect browser in the Kennect Browser extension first.');
  if(command==='ping')return 'pong';
@@ -111,6 +154,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
   if(title){const [existing]=await chrome.tabGroups.query({title,windowId:n.windowId});if(existing){groupId=existing.id;await chrome.tabs.group({tabIds:[n.id],groupId})}else{groupId=await chrome.tabs.group({tabIds:[n.id]});await chrome.tabGroups.update(groupId,{title,color:color||'cyan'})}}
   return JSON.stringify({targetId:String(n.id),...(groupId===null?{}:{groupId})});
  }
+ if(command==='open-window')return openWindow(JSON.parse(args[0]||'{}'),sessionId);
  if(command==='windows'){
   return withWindowRegistry(async()=>{
    const all=await chrome.windows.getAll({populate:true,windowTypes:['normal']});

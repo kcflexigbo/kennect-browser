@@ -228,7 +228,11 @@ test('window updates reject duplicates, empty changes, and unknown windows',asyn
 test('closing windows refuses untracked and last windows',async()=>{
  const e=await environment();
  await e.connect();
- await assert.rejects(e.scope.action({command:'close-window',args:['1',''],sessionId:'agent-a'}),/created by browser_open_window/i);
+ await assert.rejects(e.scope.action({command:'close-window',args:['1',''],sessionId:'agent-a'}),error=>{
+  assert.match(error.message,/created by browser_open_window/i);
+  assert.match(error.message,/browser_adopt_window/i);
+  return true;
+ });
  const opened=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/a'})],sessionId:'agent-a'}));
  e.windows.delete(1);
  await assert.rejects(e.scope.action({command:'close-window',args:[String(opened.windowId),''],sessionId:'agent-a'}),/only Chrome window/i);
@@ -241,6 +245,56 @@ test('closing a tracked window removes it and its registry entry',async()=>{
  assert.equal(result.closed,true);
  assert.equal(e.windows.has(opened.windowId),false);
  assert.equal(e.sessionSaved.windowRegistry[opened.windowId],undefined);
+});
+test('adopting an untracked window records provenance and allows close',async()=>{
+ const e=await environment();
+ await e.connect();
+ const raw=await e.scope.chrome.windows.create({url:'https://example.com/raw'});
+ const adopted=JSON.parse(await e.scope.action({command:'adopt-window',args:[String(raw.id)],sessionId:'agent-a'}));
+ assert.equal(adopted.windowId,raw.id);
+ assert.equal(adopted.createdByTool,false);
+ assert.equal(adopted.adopted,true);
+ assert.equal(adopted.adoptedBy,'agent-a');
+ const listed=JSON.parse(await e.scope.action({command:'windows',args:[],sessionId:'agent-a'})).windows.find(w=>w.windowId===raw.id);
+ assert.equal(listed.adopted,true);
+ assert.equal(listed.createdByTool,false);
+ const closed=JSON.parse(await e.scope.action({command:'close-window',args:[String(raw.id),''],sessionId:'agent-a'}));
+ assert.equal(closed.closed,true);
+ assert.equal(e.windows.has(raw.id),false);
+ assert.equal(e.sessionSaved.windowRegistry[raw.id],undefined);
+});
+test('adoption is idempotent and never changes a tool-created window',async()=>{
+ const e=await environment();
+ await e.connect();
+ const raw=await e.scope.chrome.windows.create({url:'https://example.com/raw'});
+ const first=JSON.parse(await e.scope.action({command:'adopt-window',args:[String(raw.id)],sessionId:'agent-a'}));
+ const second=JSON.parse(await e.scope.action({command:'adopt-window',args:[String(raw.id)],sessionId:'agent-b'}));
+ assert.equal(second.adopted,true);
+ assert.equal(second.adoptedBy,'agent-a');
+ assert.equal(second.adoptedAt,first.adoptedAt);
+ const tool=JSON.parse(await e.scope.action({command:'open-window',args:[JSON.stringify({url:'https://example.com/tool'})],sessionId:'agent-a'}));
+ const toolAdopt=JSON.parse(await e.scope.action({command:'adopt-window',args:[String(tool.windowId)],sessionId:'agent-b'}));
+ assert.equal(toolAdopt.createdByTool,true);
+ assert.equal(toolAdopt.adopted,false);
+ assert.equal(e.sessionSaved.windowRegistry[tool.windowId].adopted,undefined);
+});
+test('adopting an unknown window fails',async()=>{
+ const e=await environment();await e.connect();
+ await assert.rejects(e.scope.action({command:'adopt-window',args:['999'],sessionId:'agent-a'}),/Unknown window/i);
+});
+test('the last-window guard still refuses an adopted window',async()=>{
+ const e=await environment();await e.connect();
+ const raw=await e.scope.chrome.windows.create({url:'https://example.com/raw'});
+ await e.scope.action({command:'adopt-window',args:[String(raw.id)],sessionId:'agent-a'});
+ e.windows.delete(1);e.pages.delete(1);
+ await assert.rejects(e.scope.action({command:'close-window',args:[String(raw.id),''],sessionId:'agent-a'}),/only Chrome window/i);
+});
+test('a claim on an adopted window blocks another session from closing it',async()=>{
+ const e=await environment();await e.connect();
+ const raw=await e.scope.chrome.windows.create({url:'https://example.com/raw'});
+ await e.scope.action({command:'adopt-window',args:[String(raw.id)],sessionId:'agent-a'});
+ await e.scope.action({command:'update-window',args:[String(raw.id),JSON.stringify({name:'adopted',claim:true})],sessionId:'agent-a'});
+ await assert.rejects(e.scope.action({command:'close-window',args:[String(raw.id),''],sessionId:'agent-b'}),/claimed by another agent/i);
 });
 test('a claim blocks window-scoped updates from another session',async()=>{
  const e=await environment();

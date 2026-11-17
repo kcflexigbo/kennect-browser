@@ -12,7 +12,7 @@ function ownerLabel(sessionId){return String(sessionId??'').slice(0,8)}
 function pruneWindowRegistry(liveIds){for(const key of Object.keys(windowRegistry))if(!liveIds.has(Number(key)))delete windowRegistry[key]}
 function windowSummary(win,entry,sessionId,tabs){
  const claim=activeClaim(entry);
- return{windowId:win.id,name:entry?.name??null,purpose:entry?.purpose??null,createdByTool:entry?.createdByTool??false,owner:claim?ownerLabel(claim.ownerSession):null,claimedByYou:!!claim&&claim.ownerSession===sessionId,claimedByOther:!!claim&&claim.ownerSession!==sessionId,leaseUntil:claim?new Date(claim.leaseUntil).toISOString():null,focused:!!win.focused,state:win.state??'normal',bounds:{left:win.left??0,top:win.top??0,width:win.width??0,height:win.height??0},tabCount:tabs.length,connectedTabCount:tabs.filter(t=>approved(t.url)&&attached.has(t.id)).length};
+ return{windowId:win.id,name:entry?.name??null,purpose:entry?.purpose??null,createdByTool:entry?.createdByTool??false,adopted:entry?.adopted??false,adoptedAt:entry?.adoptedAt?new Date(entry.adoptedAt).toISOString():null,adoptedBy:entry?.adoptedBy?ownerLabel(entry.adoptedBy):null,owner:claim?ownerLabel(claim.ownerSession):null,claimedByYou:!!claim&&claim.ownerSession===sessionId,claimedByOther:!!claim&&claim.ownerSession!==sessionId,leaseUntil:claim?new Date(claim.leaseUntil).toISOString():null,focused:!!win.focused,state:win.state??'normal',bounds:{left:win.left??0,top:win.top??0,width:win.width??0,height:win.height??0},tabCount:tabs.length,connectedTabCount:tabs.filter(t=>approved(t.url)&&attached.has(t.id)).length};
 }
 const EMULATION_KEY='emulations';
 let emulations={};
@@ -264,13 +264,31 @@ async function updateWindow(windowId,changes,sessionId){
   return JSON.stringify(windowSummary(win,entry,sessionId,tabs));
  });
 }
+async function adoptWindow(windowId,sessionId){
+ if(!Number.isInteger(windowId)||windowId<0)throw Error('Invalid window ID.');
+ return withWindowRegistry(async()=>{
+  const all=await chrome.windows.getAll({windowTypes:['normal']});
+  const live=new Set(all.map(w=>w.id));
+  pruneWindowRegistry(live);
+  if(!live.has(windowId))throw Error('Unknown window ID. Refresh with browser_windows.');
+  let entry=windowRegistry[windowId];
+  if(!entry){
+   entry={windowId,name:null,purpose:null,createdByTool:false,adopted:true,adoptedAt:Date.now(),adoptedBy:sessionId,ownerSession:null,claimedAt:null,leaseUntil:null,leaseMs:1800000,createdAt:Date.now()};
+   windowRegistry[windowId]=entry;
+   await saveWindowRegistry();
+  }
+  const win=await chrome.windows.get(windowId);
+  const tabs=await chrome.tabs.query({windowId});
+  return JSON.stringify(windowSummary(win,entry,sessionId,tabs));
+ });
+}
 async function closeWindow(windowId,sessionId,force){
  if(!Number.isInteger(windowId)||windowId<0)throw Error('Invalid window ID.');
  return withWindowRegistry(async()=>{
   const all=await chrome.windows.getAll({windowTypes:['normal']});
   pruneWindowRegistry(new Set(all.map(w=>w.id)));
   const entry=windowRegistry[windowId];
-  if(!entry?.createdByTool)throw Error('Only windows created by browser_open_window in this browser session can be closed. Close user windows manually.');
+  if(!entry?.createdByTool&&!entry?.adopted)throw Error('Only windows created by browser_open_window or adopted with browser_adopt_window can be closed. Adopt the window first or close user windows manually.');
   if(all.length<=1)throw Error('Refusing to close the only Chrome window.');
   const claim=activeClaim(entry);
   if(claim&&claim.ownerSession!==sessionId&&!force)throw Error(`Window ${windowId} is claimed by another agent until ${new Date(claim.leaseUntil).toISOString()}. Use another window or ask the user to release the claim.`);
@@ -322,6 +340,7 @@ async function action({command,args=[],tabId,sessionId='local'}){
   return JSON.stringify({targetId:String(n.id),windowId:targetWindowId,...(groupId===null?{}:{groupId})});
  });
  if(command==='close-window')return closeWindow(Number(args[0]),sessionId,args[1]==='1');
+ if(command==='adopt-window')return adoptWindow(Number(args[0]),sessionId);
  if(command==='update-window')return updateWindow(Number(args[0]),JSON.parse(args[1]||'{}'),sessionId);
  if(command==='emulate-device')return emulateDevice(JSON.parse(args[0]||'{}'),sessionId,tabId);
  if(command==='clear-emulation')return clearDeviceEmulation(sessionId,tabId);

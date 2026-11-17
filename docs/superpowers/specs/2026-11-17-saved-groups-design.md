@@ -2,7 +2,9 @@
 
 Issue: #10
 Date: 2026-11-17
-Status: draft (builder check pending)
+Status: superseded — see `2026-11-17-saved-groups-investigation.md`. The
+Bookmarks data-source premise is invalid on Chrome 157. Do not implement
+this reader.
 
 ## Intent
 

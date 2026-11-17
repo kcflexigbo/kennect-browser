@@ -79,6 +79,19 @@ extension) → read/parse `Bookmarks` → response.
 - Resolve `userDataDir` and `profileDirectory` from `detectBrowserIdentity`.
   Add test-only overrides `KENNECT_BROWSER_USER_DATA_DIR` and
   `KENNECT_BROWSER_PROFILE_DIR`.
+- Profile-directory resolution and ownership guard:
+  - If the detected identity has a `profileDirectory`, use it only after
+    `chromeProfiles({userDataDir, extensionId})` confirms that directory has
+    the Kennect extension enabled. If the detected directory is not
+    extension-enabled, error instead of reading another profile's Bookmarks.
+  - If no `profileDirectory` was detected, run the same scan and use
+    `chooseExtensionProfile`. If exactly one extension-enabled profile
+    remains, use it. If several remain ambiguous, error and list the
+    candidate directories; ask the user to launch Chrome with
+    `--profile-directory=<dir>` or use `browser_ensure`.
+  - If the profile scan itself cannot be read and no directory was detected,
+    error. If a directory was detected, trust it and include a warning.
+  - Read the extension ID from `extension-id.txt`, as `ensure.mjs` does.
 - Validate `profileDirectory` is a single path segment: non-empty, no `/`,
   `\`, `.` or `..`.
 - Read `join(userDataDir, profileDirectory, 'Bookmarks')`.
@@ -95,8 +108,9 @@ extension) → read/parse `Bookmarks` → response.
   - `tabs`: direct children with an HTTP(S) `url`; return `{title, url}`.
 - Return `{groups, source:'bookmarks', profileDirectory}`.
 - Do not read or return bookmark content outside saved-group folders.
-- Cap at 500 groups and 10,000 tabs; stop walking beyond a 5,000-node safety
-  limit and include `truncated:true` when a cap is hit.
+- Cap at 500 groups and 10,000 tabs. Traverse up to 50,000 bookmark nodes as
+  a safety limit; stop and set `truncated:true` if the node, group, or tab cap
+  is hit. The 50,000-node limit bounds traversal, not output.
 - No writes; no token or secret data.
 
 ### MCP and controller
@@ -140,6 +154,17 @@ spike is required before claiming support there.
 - `controller.test.mjs`: `saved-groups` requires the extension.
 - Full suite green.
 
+## Builder check decisions
+
+- **Missing detected profile directory:** use the extension-enabled profile
+  scan and `chooseExtensionProfile`; ambiguity is an error, not a guess.
+- **Profile ownership:** require the detected directory to be
+  extension-enabled; a mismatch is an error rather than reading the wrong
+  profile's Bookmarks. Trust a detected directory only when the scan itself
+  is unreadable, and warn.
+- **Traversal limit:** 50,000 scanned bookmark nodes, separate from the 500
+  group / 10,000 tab output caps; `truncated:true` when any cap is hit.
+
 ## Spike
 
 Before finalizing the parser: save one tab group in Chrome, then inspect the
@@ -147,6 +172,11 @@ Bookmarks JSON `meta_info` keys without printing titles or URLs. Confirm the
 exact saved-group key(s), adjust the predicate/extraction, and test the same
 read on macOS if available. If the key is absent or macOS blocks the read,
 record the finding and document the limitation before shipping.
+
+Windows Chrome 157's tab-group menu has no **Save group** entry; a saved group
+may be produced by **Close group** or by dragging the group header onto the
+bookmarks bar. If the platform does not create saved groups at all, the tool
+returns an empty list and the skill documents the limitation.
 
 ## Left to the builder
 

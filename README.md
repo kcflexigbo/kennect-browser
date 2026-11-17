@@ -27,7 +27,7 @@ On macOS the launcher is installed in `~/Library/Application Support/Kennect Bro
 - Automatic local connection and reconnection; a persistent Pause control.
 - Explicit Chrome profile selection, a persisted default profile, and responsive/stale connection reporting.
 - Existing website tabs and sign-ins, new tabs, grouping and window controls.
-- Window creation, listing, targeting, naming, claims, and closing for parallel viewport testing.
+- Window creation, listing, targeting, naming, claims, adoption of agent-opened windows, and closing for parallel viewport testing.
 - Launch/ensure the personal Chrome profile when the extension is not connected.
 - Per-tab device emulation with exact width/height, DPR, mobile, touch, user agent, and orientation.
 - Accessibility snapshots, native mouse/keyboard input, screenshots and JavaScript.
@@ -57,6 +57,7 @@ node controller.mjs snapshot
 node controller.mjs evaluate 'document.title'
 node controller.mjs windows
 node controller.mjs open-window '{"url":"https://example.com/","width":390,"height":844,"name":"mobile-390","claim":true}'
+node controller.mjs adopt-window <windowId>
 node controller.mjs ensure
 node controller.mjs emulate-device '{"width":390,"height":844,"deviceScaleFactor":3,"mobile":true,"touch":true}'
 node controller.mjs clear-emulation
@@ -92,7 +93,7 @@ The existing-profile connection and basic browser controls have been exercised o
 
 ### Known limitations
 
-This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. Downloads require an HTTP(S) URL: `blob:`/`data:` URLs and POST-only download endpoints are unsupported, and browser login, CAPTCHA, paywall and download-safety decisions still apply. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls. Window names and claims live in extension session storage and reset with a browser restart or extension reload; window bounds are outer dimensions, not the page viewport; Chrome clamps window width to a platform minimum (about 500 CSS px inner at 100% scaling on Windows), so use browser_emulate_device for exact viewports; emulation is per tab, is not a real device fingerprint, resets and reapplies with the debugger, and screenshots scale by the device pixel ratio; only windows created by the tool can be closed; window operations require the extension; and claims are coordination aids, not a security boundary. `browser_ensure` can launch Chrome only when authorized, cannot revive a paused extension, scans only the default stable Chrome user-data directory, and makes one launch attempt per call.
+This is experimental software. Current limitations include full URL query values in some tab metadata, incomplete form-state snapshots, navigation snapshots that can mix old metadata with new content, screenshot/input coordinate differences at nondefault display scaling, and batch validation failures that can hide earlier completed actions. Downloads require an HTTP(S) URL: `blob:`/`data:` URLs and POST-only download endpoints are unsupported, and browser login, CAPTCHA, paywall and download-safety decisions still apply. The operating skill describes observed workarounds; these do not replace fixes in the tool. Uploads and console capture have not received the same live coverage as basic navigation and form controls. Window names and claims live in extension session storage and reset with a browser restart or extension reload; window bounds are outer dimensions, not the page viewport; Chrome clamps window width to a platform minimum (about 500 CSS px inner at 100% scaling on Windows), so use browser_emulate_device for exact viewports; emulation is per tab, is not a real device fingerprint, resets and reapplies with the debugger, and screenshots scale by the device pixel ratio; only windows created by the tool or adopted with browser_adopt_window can be closed; window operations require the extension; and claims are coordination aids, not a security boundary. `browser_ensure` can launch Chrome only when authorized, cannot revive a paused extension, scans only the default stable Chrome user-data directory, and makes one launch attempt per call.
 
 ## Model evaluation
 

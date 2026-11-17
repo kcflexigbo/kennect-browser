@@ -24,7 +24,7 @@ Pass an explicit `windowId` for critical operations. `browser_open_tab`, `browse
 
 Window bounds are outer window dimensions, not the page viewport. After `browser_resize`, verify `innerWidth` / `innerHeight` with `browser_evaluate` before claiming a viewport size. Chrome also enforces a minimum window width; a 390px request can come back with an innerWidth around 500 at 100% scaling. Use `browser_emulate_device` for exact viewports; window resizing is clamped by Chrome. Names, purposes, and claims live in extension session storage; they reset with the browser or an extension reload, and the same reload clears the registry, so existing windows become untracked.
 
-Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` in the current browser session can be closed, and the tool refuses to close the last normal window.
+Release a claim with `browser_update_window({claim: false})`, and close task-created windows with `browser_close_window` when finished. Only windows created by `browser_open_window` or adopted with `browser_adopt_window` in the current browser session can be closed, and the tool refuses to close the last normal window. If you opened a window outside Kennect (Chrome CLI or another tool), adopt it with `browser_adopt_window` after explicit user authorization, then use the existing rename/claim/close lifecycle. Adopt only a window you opened yourself; never adopt a user window.
 
 ## Device emulation
 

@@ -201,6 +201,9 @@ assert.match(adoptWindow.description,/user authorization/i);
 assert.match(adoptWindow.description,/never adopt/i);
 const badAdopt=await call('tools/call',{name:'browser_adopt_window',arguments:{windowId:-1}});
 assert.equal(badAdopt.error.code,-32602);
+assert.match(list.result.tools.find(t=>t.name==='browser_windows').description,/adopt/i);
+assert.match(list.result.tools.find(t=>t.name==='browser_close_window').description,/adopt/i);
+assert.match(list.result.tools.find(t=>t.name==='browser_update_window').description,/adopt/i);
 ```
 
 In `controller.test.mjs`, add `['adopt-window','1']` to the loop in `window commands require the extension`.
@@ -215,7 +218,7 @@ Expected: FAIL — the MCP tool is missing and `adopt-window` does not produce t
 In `server.mjs`, add the tool next to `browser_close_window`:
 
 ```js
-tool('browser_adopt_window','Adopt a live Chrome window that browser_open_window did not create, so it can be named, claimed, and closed in this browser session. Call only after the user explicitly authorizes adopting this window; never adopt a window the agent did not open.',{windowId:{type:'integer',minimum:0}},['windowId']),
+tool('browser_adopt_window','Adopt a live Chrome window that browser_open_window did not create, so it can be named, claimed, and closed in this browser session. Call only after explicit user authorization; never adopt a window the agent did not open.',{windowId:{type:'integer',minimum:0}},['windowId']),
 ```
 
 Add the command map entry beside the other window commands:
@@ -225,6 +228,14 @@ browser_adopt_window:['adopt-window',String(args.windowId)],
 ```
 
 Add this sentence to the `serverInfo.instructions` string: `Adopt a window you opened outside Kennect with browser_adopt_window only after user authorization; never adopt a user window.`
+
+Update the agent-facing descriptions so adoption is discoverable:
+
+- `browser_windows`: mention adoption provenance and that untracked windows can be adopted.
+- `browser_close_window`: say “created by browser_open_window or adopted with browser_adopt_window”.
+- `browser_update_window`: say “tool-created or adopted window”.
+
+Add assertions to `mcp.test.mjs` that those three descriptions match `/adopt/i`.
 
 In `controller.mjs`, add `'adopt-window'` to `extensionOnly` and add `case 'adopt-window':` to the dedicated-profile switch fallback that throws `This action requires the Kennect Browser extension...`.
 

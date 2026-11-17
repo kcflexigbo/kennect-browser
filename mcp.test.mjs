@@ -38,6 +38,9 @@ test('MCP discovers browser tools and rejects invalid calls',async()=>{
   assert.match(adoptWindow.description,/never adopt/i);
   const badAdopt=await call('tools/call',{name:'browser_adopt_window',arguments:{windowId:-1}});
   assert.equal(badAdopt.error.code,-32602);
+  assert.match(list.result.tools.find(t=>t.name==='browser_windows').description,/adopt/i);
+  assert.match(list.result.tools.find(t=>t.name==='browser_close_window').description,/adopt/i);
+  assert.match(list.result.tools.find(t=>t.name==='browser_update_window').description,/adopt/i);
   const windowsTool=list.result.tools.find(t=>t.name==='browser_windows');
   assert.equal(windowsTool.annotations.readOnlyHint,true);
   const openWindow=list.result.tools.find(t=>t.name==='browser_open_window');
